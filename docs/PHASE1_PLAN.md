@@ -112,7 +112,7 @@ class PersonPose:
 
 @dataclass(frozen=True)
 class PoseFrame:
-    timestamp: float                           # seconds from time.monotonic() — use this, never frame counts
+    timestamp: float                           # seconds from time.perf_counter() — use this, never frame counts
     frame_width: int
     frame_height: int
     people: tuple[PersonPose, ...]             # empty tuple when nobody is tracked
@@ -133,6 +133,7 @@ class PersonStatus:
     confidence: float                # 0..1, how sure the analyzer is about `state`
     reason: str                      # short text for the UI, e.g. "torso 78° for 6.1 s after fast drop"
     since: float                     # timestamp when this person entered `state`
+                                     # (time in state = time.perf_counter() - since)
 
 
 @dataclass(frozen=True)
@@ -359,7 +360,8 @@ keeping `main` runnable, and running the evaluation sessions.
    - Takes a webcam index or a URL (reuse `parse_source` from `camera_test.py`).
    - A background thread reads continuously and keeps **only the latest frame**, so slow inference never builds a
      backlog of stale frames.
-   - `read() -> (ok, frame, timestamp)` with `time.monotonic()`; `close()` stops the thread.
+   - `read() -> (ok, frame, timestamp)` with `time.perf_counter()`; `close()` stops the thread.
+     (Not `time.monotonic()`: on Python 3.12 for Windows it only ticks every ~15.6 ms, so frame timestamps collide.)
    - URL sources: if reads fail, reconnect with a short backoff (1 s, 2 s, 4 s, max 5 s) instead of crashing.
 3. **`pipeline.py` → `Pipeline(source, analyzer, sink, model_path="yolo26n-pose.pt")`**
    - Loop: `frame = source.read()` → `model.track(frame, persist=True, tracker="bytetrack.yaml", verbose=False)` →
