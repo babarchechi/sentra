@@ -12,7 +12,9 @@
 | **iesa242** | **A — Posture analysis** | Turn 17 body keypoints into a per-person "possible fall" state | `feature/posture-analysis` |
 | **Swechha03** | **C — Dashboard & alerts** (+ pitch) | Show the live view, per-person status, a "please check" alert, and privacy mode | `feature/ui` |
 
-babarchechi reviews and merges all pull requests into `main` and keeps `main` runnable.
+Every **code** change goes through a pull request that **another teammate reviews and approves** before it is
+merged; docs and instructions can go straight to `main` (Section 9). babarchechi, as integration lead, does the
+merging and keeps `main` runnable.
 
 **What we are building:** a demo that watches a consenting person on a camera and, if they drop quickly to the floor
 and stay there, shows **"Possible fall — please check"** so a human can confirm or dismiss it.
@@ -38,8 +40,9 @@ It is a hackathon prototype, **not a medical device**.
    **Done when:** you see the skeleton with an `id:` label on yourself and `q` quits.
 
 2. **Read Section 4 (the shared contract) and agree on it** in the team chat. It's the only thing all three tracks depend on.
-3. **babarchechi** creates the package skeleton (Section 5) and merges it into `main`.
-4. **iesa242 and Swechha03** wait for that merge, then `git pull` and create their branch (Section 9).
+3. ✅ **Done:** the package skeleton (Section 5) is merged into `main` (PR #1). Every file you own already exists with
+   a `TODO` showing where to start.
+4. **Everyone:** `git pull`, `python -m pip install -r requirements.txt`, then create your branch (Section 9).
 
 ## 3. How the pieces fit
 
@@ -425,12 +428,50 @@ git push -u origin feature/posture-analysis   # -u only needed the first time
 ```
 
 Then open a pull request on GitHub (the yellow **Compare & pull request** button, or `gh pr create`) into `main`,
-and post the link in the team chat. babarchechi reviews and merges.
+pick a teammate under **Reviewers**, and post the link in the team chat.
 
-- **Small PRs, often.** Two or three per person per day is better than one giant PR on Saturday night.
+### Review rule
+
+- **Code** (anything in `src/` or `tests/`, plus `requirements.txt` and `pyproject.toml`): goes through a pull
+  request and needs an **approving review from someone other than the author** before it's merged. That includes
+  babarchechi's own PRs. Changes to the shared `src/sentra/events.py` need all three to approve.
+- **Docs and instructions** (`docs/`, `README.md`): commit straight to `main` and push, no PR needed. Pull first to
+  avoid conflicts, and post a one-line note in the team chat saying what changed.
+
+GitHub can't enforce reviews on our free private repo, so it's a team agreement: **don't click Merge on a code PR
+that hasn't been approved.**
+
+### How to review a PR
+
+Try to respond within about 30 minutes during work sessions; a slow review blocks a teammate.
+
+1. Open the PR on GitHub and go to the **Files changed** tab.
+2. Check:
+   - Does it only touch the author's own files (Section 5)? Changes to shared files need everyone's OK.
+   - Does it still match `events.py`?
+   - Nothing committed that shouldn't be: `.venv/`, `*.pt`, videos, `outputs/`, stream URLs, passwords.
+   - Does it run? To try it locally:
+
+     ```powershell
+     git fetch origin
+     git checkout <their-branch-name>
+     python -m pytest -q          # plus that track's run command
+     git checkout <your-branch>   # go back to your own work
+     ```
+
+3. Comment on specific lines if something needs changing, then **Review changes** → **Approve** or
+   **Request changes**. Small style nits shouldn't block an approval during a hackathon.
+4. Once approved, babarchechi merges it with **Merge pull request** and deletes the branch. Everyone then pulls
+   `main` and merges it into their own branch.
+
+### Habits
+
+- **Small PRs, often.** Two or three per person per day is better than one giant PR on Saturday night, and they're
+  much faster to review.
 - Commit prefixes: `feat:`, `fix:`, `test:`, `docs:`, `chore:`.
 - **Never commit** `.venv/`, `*.pt` weights, videos, `outputs/`, `.env`, stream URLs or passwords.
-- Never force-push `main`. If a merge conflict is in someone else's file, ask them instead of guessing.
+- Never commit code directly to `main`, and never force-push it. If a merge conflict is in someone else's file, ask
+  them instead of guessing.
 - New dependency? Add the pinned line to `requirements.txt` in your PR and tell everyone to re-run
   `python -m pip install -r requirements.txt` after it merges.
 
@@ -481,6 +522,6 @@ odd behaviour. These numbers go in the pitch, and honest numbers beat "it works"
 
 ## 13. Decisions still open
 
-- [ ] Agree on Section 4 (`events.py`) tonight, with any changes made before the skeleton PR
+- [ ] Confirm Section 4 (`events.py`) tonight. It's already merged in PR #1, so any changes go in a new PR that all three approve
 - [ ] Is the phone camera a must-have for the demo, or a bonus? (Default: bonus; laptop webcam is the safe path)
 - [ ] Level 2 web dashboard: go or no-go at the Saturday evening checkpoint
