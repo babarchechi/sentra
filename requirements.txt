@@ -43,3 +43,12 @@ ultralytics==8.4.203
 ultralytics-platform==0.1.104
 ultralytics-thop==2.2.5
 urllib3==2.8.0
+winrt-runtime==4.1.0 ; sys_platform == "win32"
+winrt-Windows.Devices.Enumeration==4!10.0.28000.2957 ; sys_platform == "win32"
+winrt-Windows.Foundation==4!10.0.28000.2957 ; sys_platform == "win32"
+winrt-Windows.Foundation.Collections==4!10.0.28000.2957 ; sys_platform == "win32"
+winrt-Windows.Graphics.Imaging==4!10.0.28000.2957 ; sys_platform == "win32"
+winrt-Windows.Media.Capture==4!10.0.28000.2957 ; sys_platform == "win32"
+winrt-Windows.Media.Capture.Frames==4!10.0.28000.2957 ; sys_platform == "win32"
+winrt-Windows.Media.MediaProperties==4!10.0.28000.2957 ; sys_platform == "win32"
+winrt-Windows.Storage.Streams==4!10.0.28000.2957 ; sys_platform == "win32"

@@ -57,8 +57,36 @@ python src/camera_test.py --source 0 --track    # plus ByteTrack per-person IDs
 
 Click the video window and press `q` to quit. CPU inference is slower than the raw camera rate; that is expected.
 
+To switch cameras while it runs, click the **Camera** dropdown in the top-left corner of the video and pick one. On
+Windows the list shows every camera Windows knows about (built-in webcam, USB webcams, Phone Link phones, DroidCam and
+other virtual cameras) and is re-scanned each time you open it, so newly connected cameras appear without restarting.
+The current camera is highlighted green. If a camera sends no video within about 5 seconds the app stays on the
+current one; if the current camera disconnects it switches to another. Tracking IDs restart after a switch.
+
+On Windows, `--source 0` means the first camera in `--list-cameras` (the IR face-unlock camera is not listed). On other
+platforms numbers are OpenCV webcam indices and the list is not re-scanned.
+
 Tracking IDs are temporary and can change when people overlap or leave and re-enter the frame. Sentra does not
 identify individuals.
+
+### Optional: Samsung/Android phone through Phone Link (Windows 11)
+
+Windows 11 can use a linked Android phone as a camera, but it appears as a *Windows Virtual Camera* that OpenCV
+cannot open. `src/windows_camera.py` reads it through the Windows MediaCapture API instead (the `winrt-*` packages in
+`requirements.txt`, installed on Windows only).
+
+1. *Settings → Bluetooth & devices → Mobile devices → Manage devices* → turn on **Use as a connected camera**.
+2. Unlock the phone and accept the Link to Windows camera prompt if one appears.
+3. Run:
+
+```powershell
+python src/camera_test.py --list-cameras        # shows e.g. "1: <name>'s S25 Ultra (phone)"
+python src/camera_test.py --source phone        # first Windows Virtual Camera
+python src/camera_test.py --source "windows:S25 Ultra"   # or match any camera by part of its name
+```
+
+A spinning circle in the window means Windows is connected but the phone has not started streaming yet; unlock the
+phone and check its notifications.
 
 ### Optional: phone or IP camera (only after the webcam works)
 
