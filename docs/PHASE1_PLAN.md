@@ -268,7 +268,7 @@ These are **guesses to tune**, not known-good values. Keep them all in one datac
 
 ### 6.4 Tests (`tests/test_posture.py`, run with `python -m pytest -q`)
 
-Add `pytest` to `requirements.txt` in your PR (pin the version `pip freeze` shows). Write a helper that builds a
+`pytest` is already in `requirements.txt` (added by the skeleton PR). Write a helper that builds a
 `(17, 3)` keypoint array for a person with a given torso angle, hip position and scale, plus a helper that turns a
 timeline into `PoseFrame`s at ~10 fps. Minimum cases:
 
