@@ -54,11 +54,17 @@ def _pick_format(formats):
 
 
 def list_devices() -> list[tuple[str, str]]:
-    """(device id, name) for every enabled video capture device, including virtual cameras."""
+    """(device id, name) for every enabled video capture device, including virtual cameras.
+
+    Windows returns devices in no fixed order, so built-in cameras (which report a panel location) come first,
+    then the rest by name. That keeps "camera 0" meaning the laptop's own webcam.
+    """
     loop = asyncio.new_event_loop()
     try:
         devices = _run(loop, DeviceInformation.find_all_async(DeviceClass.VIDEO_CAPTURE))
-        return [(d.id, d.name) for d in devices if d.is_enabled]
+        enabled = [d for d in devices if d.is_enabled]
+        enabled.sort(key=lambda d: (d.enclosure_location is None, d.name.lower()))
+        return [(d.id, d.name) for d in enabled]
     finally:
         loop.close()
 
