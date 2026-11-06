@@ -12,8 +12,9 @@
 | **iesa242** | **A — Posture analysis** | Turn 17 body keypoints into a per-person "possible fall" state | `feature/posture-analysis` |
 | **Swechha03** | **C — Dashboard & alerts** (+ pitch) | Show the live view, per-person status, a "please check" alert, and privacy mode | `feature/ui` |
 
-Every change goes through a pull request that **another teammate reviews and approves** before it is merged
-(Section 9). babarchechi, as integration lead, does the merging and keeps `main` runnable.
+Every **code** change goes through a pull request that **another teammate reviews and approves** before it is
+merged; docs and instructions can go straight to `main` (Section 9). babarchechi, as integration lead, does the
+merging and keeps `main` runnable.
 
 **What we are building:** a demo that watches a consenting person on a camera and, if they drop quickly to the floor
 and stay there, shows **"Possible fall — please check"** so a human can confirm or dismiss it.
@@ -431,11 +432,14 @@ pick a teammate under **Reviewers**, and post the link in the team chat.
 
 ### Review rule
 
-**Nothing goes into `main` without an approving review from someone other than the author.** This covers code and
-docs, and babarchechi's own PRs too. Nobody commits directly to `main`.
+- **Code** (anything in `src/` or `tests/`, plus `requirements.txt` and `pyproject.toml`): goes through a pull
+  request and needs an **approving review from someone other than the author** before it's merged. That includes
+  babarchechi's own PRs. Changes to the shared `src/sentra/events.py` need all three to approve.
+- **Docs and instructions** (`docs/`, `README.md`): commit straight to `main` and push, no PR needed. Pull first to
+  avoid conflicts, and post a one-line note in the team chat saying what changed.
 
-GitHub can't enforce this on our free private repo, so it's a team agreement: **don't click Merge on a PR that
-hasn't been approved.**
+GitHub can't enforce reviews on our free private repo, so it's a team agreement: **don't click Merge on a code PR
+that hasn't been approved.**
 
 ### How to review a PR
 
@@ -466,8 +470,8 @@ Try to respond within about 30 minutes during work sessions; a slow review block
   much faster to review.
 - Commit prefixes: `feat:`, `fix:`, `test:`, `docs:`, `chore:`.
 - **Never commit** `.venv/`, `*.pt` weights, videos, `outputs/`, `.env`, stream URLs or passwords.
-- Never commit directly to `main`, and never force-push it. If a merge conflict is in someone else's file, ask them
-  instead of guessing.
+- Never commit code directly to `main`, and never force-push it. If a merge conflict is in someone else's file, ask
+  them instead of guessing.
 - New dependency? Add the pinned line to `requirements.txt` in your PR and tell everyone to re-run
   `python -m pip install -r requirements.txt` after it merges.
 
