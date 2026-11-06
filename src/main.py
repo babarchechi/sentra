@@ -17,7 +17,11 @@ log = logging.getLogger("sentra")
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Sentra prototype (not a medical device)")
-    parser.add_argument("--source", default="0", help="Webcam index (0) or approved camera URL")
+    parser.add_argument(
+        "--source", default="0",
+        help="Webcam index (0) or approved camera URL. Windows only, opt-in: 'phone' (Phone Link connected "
+             "camera) or 'windows:<part of camera name>' (e.g. windows:DroidCam)",
+    )
     parser.add_argument(
         "--rotate", type=int, choices=(0, 90, 180, 270), default=0,
         help="Rotate frames clockwise by this many degrees so people appear upright "

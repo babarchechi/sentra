@@ -1,12 +1,15 @@
-"""Windows-only camera reader for cameras OpenCV cannot open.
+"""Windows-only camera reader for cameras OpenCV cannot open. Opt-in; used by sentra.capture.
 
 Phone Link's "Use as a connected camera" exposes a phone as a Windows Virtual Camera. OpenCV's MSMF and
 DirectShow backends do not list virtual cameras, so this module reads them through the Windows
-MediaCapture API instead. It mimics the small part of cv2.VideoCapture that camera_test.py uses:
-isOpened(), read() and release().
+MediaCapture API instead. It mimics the part of cv2.VideoCapture that FrameSource uses:
+isOpened(), read() and release(). Numbered webcams and stream URLs never come through here.
 
 Frames are converted in memory and never saved.
+
+List camera names:  python -m sentra.windows_camera   (from src/, or with src on PYTHONPATH)
 """
+from __future__ import annotations
 
 import asyncio
 import time
@@ -53,11 +56,20 @@ def _pick_format(formats):
     return best
 
 
+def _is_repeat(stamp, last) -> bool:
+    """True if a frame is the one we already returned.
+
+    SystemRelativeTime is optional; a camera that doesn't report it gives None for every frame. Without a
+    timestamp we can't tell frames apart, so we accept the frame rather than skip everything (including the first).
+    """
+    return stamp is not None and stamp == last
+
+
 def list_devices() -> list[tuple[str, str]]:
     """(device id, name) for every enabled video capture device, including virtual cameras.
 
     Windows returns devices in no fixed order, so built-in cameras (which report a panel location) come first,
-    then the rest by name. That keeps "camera 0" meaning the laptop's own webcam.
+    then the rest by name, to keep listings stable.
     """
     loop = asyncio.new_event_loop()
     try:
@@ -140,10 +152,11 @@ class WindowsCamera:
             ref = self._reader.try_acquire_latest_frame()
             frame = ref.video_media_frame if ref is not None else None
             bitmap = frame.software_bitmap if frame is not None else None
-            if bitmap is None or ref.system_relative_time == self._last_time:
+            stamp = ref.system_relative_time if ref is not None else None
+            if bitmap is None or _is_repeat(stamp, self._last_time):
                 time.sleep(0.005)
                 continue
-            self._last_time = ref.system_relative_time
+            self._last_time = stamp
             if bitmap.bitmap_pixel_format != BitmapPixelFormat.BGRA8:
                 bitmap = SoftwareBitmap.convert(bitmap, BitmapPixelFormat.BGRA8)
             width, height = bitmap.pixel_width, bitmap.pixel_height
@@ -172,3 +185,8 @@ class WindowsCamera:
                 pass
         if not self._loop.is_closed():
             self._loop.close()
+
+
+if __name__ == "__main__":
+    for camera_name in list_cameras():
+        print(camera_name)

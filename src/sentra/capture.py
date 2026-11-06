@@ -17,9 +17,29 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 
+WINDOWS_PREFIX = "windows:"
+PHONE_SOURCE = "phone"
+PHONE_HINT = "Windows Virtual Camera"  # how Phone Link names a phone used as a connected camera
+
+
 def parse_source(raw: str) -> int | str:
     """Turn a webcam index like "0" into an int; leave anything else (a stream URL) as a string."""
     return int(raw) if raw.isdecimal() else raw
+
+
+def windows_camera_name(source: int | str) -> str | None:
+    """Camera-name fragment for the opt-in Windows sources, or None for everything else.
+
+    "phone" -> the Phone Link camera; "windows:<part of name>" -> any camera Windows lists (e.g. DroidCam).
+    Numbered webcams and URLs return None and stay on OpenCV.
+    """
+    if not isinstance(source, str):
+        return None
+    if source.lower() == PHONE_SOURCE:
+        return PHONE_HINT
+    if source.lower().startswith(WINDOWS_PREFIX):
+        return source[len(WINDOWS_PREFIX):].strip() or None
+    return None
 
 
 def describe_source(source: int | str) -> str:
@@ -39,8 +59,30 @@ def describe_source(source: int | str) -> str:
     return f"{parts.scheme}://{parts.hostname or '?'}{port}{parts.path}"
 
 
+def _open_windows_camera(name: str):
+    """Open a Windows camera by name through MediaCapture, or return None (also on non-Windows)."""
+    try:
+        from sentra.windows_camera import WindowsCamera  # Windows-only dependency, imported on demand
+    except ImportError:
+        log.error("Source %r needs Windows and the winrt packages (pip install -r requirements.txt).", name)
+        return None
+    try:
+        # Short frame timeout so FrameSource's failed-read counter reaches its reconnect in ~10 s, not ~50 s.
+        camera = WindowsCamera(name=name, frame_timeout=1.0)
+    except OSError as exc:  # e.g. the camera is in use by another app
+        log.warning("Cannot open Windows camera %r: %s", name, exc)
+        return None
+    if not camera.isOpened():
+        camera.release()
+        return None
+    return camera
+
+
 def _open_capture(source: int | str) -> cv2.VideoCapture | None:
     """Open a camera or stream, or return None if it can't be opened. Tests replace this function."""
+    windows_name = windows_camera_name(source)
+    if windows_name is not None:
+        return _open_windows_camera(windows_name)
     capture = cv2.VideoCapture(source)
     if not capture.isOpened():
         capture.release()
