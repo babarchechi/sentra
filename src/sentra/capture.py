@@ -49,6 +49,15 @@ def _open_capture(source: int | str) -> cv2.VideoCapture | None:
     return capture
 
 
+# Degrees clockwise -> OpenCV rotate code. A phone held upright usually needs 90 or 270.
+ROTATIONS: dict[int, int | None] = {
+    0: None,
+    90: cv2.ROTATE_90_CLOCKWISE,
+    180: cv2.ROTATE_180,
+    270: cv2.ROTATE_90_COUNTERCLOCKWISE,
+}
+
+
 class FrameSource:
     """Background camera reader that always hands out the newest frame.
 
@@ -56,18 +65,25 @@ class FrameSource:
     - If the source stops delivering frames, it is released and reopened with backoff
       (1 s, 2 s, 4 s, then every 5 s) until close() is called.
     - The first open must succeed, otherwise the constructor raises RuntimeError.
+    - `rotate` (0, 90, 180 or 270 degrees clockwise) turns frames upright, e.g. for a phone held in
+      portrait. This matters for fall detection: a sideways image makes a standing person look horizontal.
     """
 
     def __init__(
         self,
         source: int | str,
         *,
+        rotate: int = 0,
         open_timeout_s: float = 15.0,
         max_failed_reads: int = 10,
         backoff_start_s: float = 1.0,
         backoff_max_s: float = 5.0,
     ) -> None:
+        if rotate not in ROTATIONS:
+            raise ValueError(f"rotate must be one of {sorted(ROTATIONS)}, got {rotate}")
         self.source = source
+        self.rotate = rotate
+        self._rotate_code = ROTATIONS[rotate]
         self.description = describe_source(source)
         self._max_failed_reads = max_failed_reads
         self._backoff_start_s = backoff_start_s
@@ -97,6 +113,7 @@ class FrameSource:
 
         Waits up to `timeout` seconds for a frame that hasn't been returned before.
         Returns (False, None, 0.0) if none arrives in time or the source is closed.
+        The frame is already rotated by `rotate`.
         """
         deadline = time.monotonic() + timeout
         with self._new_frame:
@@ -110,7 +127,11 @@ class FrameSource:
                     return False, None, 0.0
                 self._new_frame.wait(remaining)
             self._last_read_seq = self._seq
-            return True, self._frame, self._timestamp
+            frame, timestamp = self._frame, self._timestamp
+        if self._rotate_code is not None:
+            # Outside the lock, and only for frames we hand out, so the reader thread never waits on it.
+            frame = cv2.rotate(frame, self._rotate_code)
+        return True, frame, timestamp
 
     def close(self) -> None:
         """Stop the reader thread and release the camera. Safe to call more than once."""

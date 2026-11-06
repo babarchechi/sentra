@@ -31,12 +31,24 @@ class FakeCapture:
         self.released = True
 
 
+class MarkerCapture(FakeCapture):
+    """Frames 2 rows x 3 columns with one bright pixel in the top-left corner, to check rotation."""
+
+    def read(self):
+        ok, _ = super().read()
+        if not ok:
+            return False, None
+        frame = np.zeros((2, 3, 3), np.uint8)
+        frame[0, 0] = 255
+        return True, frame
+
+
 @pytest.fixture
 def make_source(monkeypatch):
     """Build a FrameSource whose successive opens return the given fakes (None = open fails)."""
     created = []
 
-    def factory(captures, source=0):
+    def factory(captures, source=0, **kwargs):
         queue = list(captures)
         opens = []
 
@@ -46,13 +58,40 @@ def make_source(monkeypatch):
             return cap
 
         monkeypatch.setattr(capture, "_open_capture", fake_open)
-        src = FrameSource(source, max_failed_reads=2, backoff_start_s=0.01, backoff_max_s=0.02, open_timeout_s=2)
+        src = FrameSource(
+            source, max_failed_reads=2, backoff_start_s=0.01, backoff_max_s=0.02, open_timeout_s=2, **kwargs
+        )
         created.append(src)
         return src, opens
 
     yield factory
     for src in created:
         src.close()
+
+
+@pytest.mark.parametrize(
+    "rotate, shape, marker",
+    [
+        (0, (2, 3, 3), (0, 0)),
+        (90, (3, 2, 3), (0, 1)),   # clockwise: the top-left pixel ends up top-right
+        (180, (2, 3, 3), (1, 2)),  # bottom-right
+        (270, (3, 2, 3), (2, 0)),  # counter-clockwise: bottom-left
+    ],
+)
+def test_rotate_turns_frames(make_source, rotate, shape, marker):
+    src, _ = make_source([MarkerCapture(frames=10_000)], rotate=rotate)
+    ok, frame, _ = src.read(timeout=1)
+    assert ok
+    assert frame.shape == shape
+    assert frame[marker][0] == 255
+
+
+def test_invalid_rotate_rejected_before_opening_camera(monkeypatch):
+    opened = []
+    monkeypatch.setattr(capture, "_open_capture", lambda source: opened.append(source))
+    with pytest.raises(ValueError):
+        FrameSource(0, rotate=45)
+    assert opened == []
 
 
 def test_parse_source():

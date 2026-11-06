@@ -18,6 +18,11 @@ log = logging.getLogger("sentra")
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Sentra prototype (not a medical device)")
     parser.add_argument("--source", default="0", help="Webcam index (0) or approved camera URL")
+    parser.add_argument(
+        "--rotate", type=int, choices=(0, 90, 180, 270), default=0,
+        help="Rotate frames clockwise by this many degrees so people appear upright "
+             "(try 90 or 270 for a phone held in portrait)",
+    )
     parser.add_argument("--ui", choices=("cv", "web"), default="cv", help="Dashboard type")
     parser.add_argument("--privacy", action="store_true", help="Start in skeleton-only privacy mode")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Pose model weights file")
@@ -37,10 +42,11 @@ def main() -> None:
         raise SystemExit("The web dashboard is a Level 2 stretch goal and isn't built yet. Use --ui cv.")
 
     try:
-        source = FrameSource(parse_source(args.source))
+        source = FrameSource(parse_source(args.source), rotate=args.rotate)
     except RuntimeError as exc:
         raise SystemExit(str(exc)) from None
-    log.info("Camera: %s. Click the video window and press q to quit.", source.description)
+    rotation = f", rotated {args.rotate} degrees clockwise" if args.rotate else ""
+    log.info("Camera: %s%s. Click the video window and press q to quit.", source.description, rotation)
 
     try:
         sink = CvDashboard(privacy=args.privacy)
