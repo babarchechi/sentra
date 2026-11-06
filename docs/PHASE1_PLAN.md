@@ -13,8 +13,8 @@
 | **Swechha03** | **C — Dashboard & alerts** (+ pitch) | Show the live view, per-person status, a "please check" alert, and privacy mode | `feature/ui` |
 
 Every **code** change goes through a pull request that **another teammate reviews and approves** before it is
-merged; docs and instructions can go straight to `main` (Section 9). babarchechi, as integration lead, does the
-merging and keeps `main` runnable.
+merged; docs and instructions can go straight to `main` (Section 9). Once a PR is approved, any teammate can merge
+it. babarchechi, as integration lead, makes sure `main` keeps running after each merge.
 
 **What we are building:** a demo that watches a consenting person on a camera and, if they drop quickly to the floor
 and stay there, shows **"Possible fall — please check"** so a human can confirm or dismiss it.
@@ -348,8 +348,8 @@ long-stillness stretch rule.
 
 ## 7. Track B — Camera & pipeline · **babarchechi**
 
-**Goal:** `python src/main.py --source 0` runs the whole system end to end. You also own integration: merging PRs,
-keeping `main` runnable, and running the evaluation sessions.
+**Goal:** `python src/main.py --source 0` runs the whole system end to end. You also own integration: checking that
+`main` still runs after each merge (anyone can merge an approved PR), and running the evaluation sessions.
 
 **Your files:** `capture.py`, `pipeline.py`, `main.py`, `sentra/__init__.py`, `pyproject.toml`, `docs/evaluation.md`.
 
@@ -487,8 +487,18 @@ pick a teammate under **Reviewers**, and post the link in the team chat.
 - **Docs and instructions** (`docs/`, `README.md`): commit straight to `main` and push, no PR needed. Pull first to
   avoid conflicts, and post a one-line note in the team chat saying what changed.
 
-GitHub can't enforce reviews on our free private repo, so it's a team agreement: **don't click Merge on a code PR
-that hasn't been approved.**
+### Merging
+
+- **Anyone can merge** a code PR once it has the approvals it needs: the author, the reviewer, or anyone else.
+- **New commits need a new approval.** If commits are pushed after someone approved, the PR needs a fresh approval
+  before merging. On our free plan GitHub **keeps showing "Approved"** even after new commits, so before you click
+  Merge, check on the *Conversation* tab that the latest approval comes **after** the latest commit.
+- **`events.py` changes need all three.** If a PR touches `src/sentra/events.py`, wait for approval from both
+  people who didn't write it.
+- After merging, click **Delete branch**, then post "merged #N" in the team chat so everyone pulls.
+
+GitHub can't enforce any of this on our free private repo, so it's a team agreement: **don't click Merge on a code
+PR that doesn't have the approvals above.**
 
 ### How to review a PR
 
@@ -510,8 +520,8 @@ Try to respond within about 30 minutes during work sessions; a slow review block
 
 3. Comment on specific lines if something needs changing, then **Review changes** → **Approve** or
    **Request changes**. Small style nits shouldn't block an approval during a hackathon.
-4. Once approved, babarchechi merges it with **Merge pull request** and deletes the branch. Everyone then pulls
-   `main` and merges it into their own branch.
+4. Once it has the approvals it needs (see *Merging* above), anyone can click **Merge pull request** and then
+   **Delete branch**. Everyone then pulls `main` and merges it into their own branch.
 
 ### Habits
 
@@ -574,5 +584,7 @@ odd behaviour. These numbers go in the pitch, and honest numbers beat "it works"
 ## 13. Decisions still open
 
 - [ ] Confirm Section 4 (`events.py`) tonight. It's already merged in PR #1, so any changes go in a new PR that all three approve
+- [ ] **Swechha03:** confirm the `events.py` clock change merged in PR #3 without your review: timestamps now come from
+  `time.perf_counter()`, so "time in state" is `time.perf_counter() - status.since`
 - [ ] Is the phone camera a must-have for the demo, or a bonus? (Default: bonus; laptop webcam is the safe path)
 - [ ] Level 2 web dashboard: go or no-go at the Saturday evening checkpoint
