@@ -71,6 +71,20 @@ python src/camera_test.py --source "rtsp://PHONE_IP:PORT/ACTUAL_STREAM_PATH"
 
 These are placeholders. Never commit stream URLs or credentials, and never expose a camera to the public internet.
 
+### Optional, Windows only: Phone Link or DroidCam in the main app (experimental)
+
+OpenCV can't open Windows virtual cameras such as Phone Link's *Use as a connected camera* or DroidCam. `src/main.py`
+can read them through the Windows camera API when you ask for them by name; numbered webcams and URLs are unaffected.
+
+```powershell
+python -m sentra.windows_camera                 # list camera names (run from src/)
+python src/main.py --source phone               # Phone Link connected camera
+python src/main.py --source "windows:DroidCam"  # any camera, by part of its name
+```
+
+Not yet shown working end to end with live video: Phone Link has only delivered its loading spinner in testing. The IP
+camera route above is the supported phone path.
+
 ## Privacy and consent
 
 - Test only with cameras you are authorized to use and people who have agreed to be on camera.
