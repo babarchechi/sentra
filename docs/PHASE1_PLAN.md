@@ -248,9 +248,38 @@ too few keypoints (hips/shoulders not visible) ───────► UNKNOWN 
 - Before the alert fires, the "lying after a drop" period can report `DESCENDING` or `ON_GROUND`, whichever is
   clearer. The UI only reacts to `POSSIBLE_FALL`.
 - Add **hysteresis**: a new state must hold for `state_hold_frames` frames before you switch, so jitter doesn't flicker.
-- **Forget** tracks not seen for `track_timeout_s`.
+- **Forget** tracks not seen for `track_timeout_s`. Exception: a track that disappears soon after a fast drop goes
+  on a "recently lost" list instead (see below).
 - `confidence`: keep it simple, e.g. mean keypoint confidence × how clearly the thresholds were exceeded, clipped to 0..1.
 - `reason`: short and human, e.g. `"torso 81° for 5.4 s after fast drop"`. The dashboard shows it.
+
+#### When the picture is uncertain
+
+Rule of thumb: **uncertain after a fast drop → a lower-confidence `POSSIBLE_FALL` for a human to check. Uncertain
+with no drop → no alert.** Build the core state machine above first, then add these in order:
+
+1. **Track ID changes mid-fall** (should-have). ByteTrack can give someone a new ID when they drop suddenly or are
+   briefly hidden, and the new ID has no history. When a track disappears within a few seconds of a fast drop, put
+   its last box and drop time on a **"recently lost"** list for `lost_memory_s`. If a new `track_id` appears whose box
+   overlaps that last box (IoU ≥ `lost_match_iou`), copy the old history onto the new ID. The drop still counts and
+   the on-ground timer keeps running.
+2. **Fast drop, then can't be seen** (should-have). After a fast drop the person turns `UNKNOWN` (hips or shoulders
+   hidden) or leaves the frame entirely (fell behind a bed, out of shot). If they don't reappear upright within
+   `lost_after_drop_alert_s`, raise `POSSIBLE_FALL` with confidence ≤ `uncertain_confidence_max` and a reason like
+   `"fast drop, then lost from view for 6 s"`. Reappearing upright cancels it.
+   - The `UNKNOWN`-after-drop case works with the current contract, because that person is still in `pose.people`.
+   - ⚠️ **The fully-out-of-frame case needs a contract change.** `events.py` says statuses are "one per person in
+     pose.people", and a person who's out of frame isn't in it. It needs that rule relaxed so a `PersonStatus` can be
+     sent for a recently lost `track_id`, and the dashboard has to show an alert with no skeleton. Agree it with
+     babarchechi and Swechha03 and change `events.py` in a PR that all three approve before building on it.
+3. **Stillness on the ground** (should-have for confidence; stretch for alerting). While someone is lying, measure
+   how much their visible keypoints move over the last ~1–2 s, in torso-lengths per second.
+   - Still (below `still_motion_max`): raise the `POSSIBLE_FALL` confidence and say so in `reason`
+     (`"... still for 6 s"`).
+   - Moving does **not** cancel an alert, because someone struggling after a fall has still fallen. Only getting back
+     upright does (`recovery_s`).
+   - *Stretch:* lying still for `still_long_alert_s` with **no** drop seen → low-confidence `POSSIBLE_FALL`. This
+     catches slow collapses. Lying down slowly and moving around (e.g. stretching on a mat) stays `ON_GROUND`.
 
 ### 6.3 Starting thresholds — put them in a `PostureConfig` dataclass
 
@@ -268,6 +297,12 @@ These are **guesses to tune**, not known-good values. Keep them all in one datac
 | `recovery_s` | 2.0 | Upright this long clears `POSSIBLE_FALL` |
 | `state_hold_frames` | 3 | Frames a new state must persist before switching |
 | `track_timeout_s` | 3.0 | Forget a track not seen for this long |
+| `lost_memory_s` | 10.0 | How long to keep a track that disappeared soon after a fast drop |
+| `lost_match_iou` | 0.3 | Box overlap needed to treat a new track ID as that lost person |
+| `lost_after_drop_alert_s` | 5.0 | Unseen or `UNKNOWN` this long after a fast drop → low-confidence `POSSIBLE_FALL` |
+| `uncertain_confidence_max` | 0.5 | Highest confidence allowed for alerts raised from uncertain evidence |
+| `still_motion_max` | 0.05 | Keypoint movement (torso-lengths per second) that still counts as "still" |
+| `still_long_alert_s` | 20.0 | *Stretch:* still on the ground this long with no drop seen → low-confidence alert |
 
 ### 6.4 Tests (`tests/test_posture.py`, run with `python -m pytest -q`)
 
@@ -287,18 +322,26 @@ timeline into `PoseFrame`s at ~10 fps. Minimum cases:
 | Two people, only one falls | Alert only for that `track_id` |
 | Person disappears for 5 s | Track forgotten, no crash |
 | Uneven frame timing (5–15 fps jitter) | Same outcomes as above |
+| Fast drop, then the track ID changes while lying (new ID, overlapping box) | `POSSIBLE_FALL` for the new ID, on time |
+| Fast drop, then hips and shoulders go low-confidence for 6 s | `POSSIBLE_FALL` with confidence ≤ 0.5 |
+| Fast drop, disappear, reappear upright within 3 s | No alert |
+| Fast drop, then out of frame for 6 s *(only after the contract change)* | Low-confidence `POSSIBLE_FALL` for the old ID |
+| Fast drop, then lying still vs. lying and moving | Both `POSSIBLE_FALL`; the still one has higher confidence |
+| Lie down slowly, keep moving for 25 s | `ON_GROUND`, no alert |
+| *Stretch:* lie down slowly, stay still for 25 s | Low-confidence `POSSIBLE_FALL` |
 
 ### 6.5 Definition of done (Track A)
 
 - [ ] All the test cases above pass on `python -m pytest -q`
 - [ ] `PostureAnalyzer.update()` matches the interface in Section 4 and never crashes on empty or partial poses
 - [ ] Thresholds live in `PostureConfig` with comments
+- [ ] "When the picture is uncertain" items 1–3 handled (the out-of-frame part of item 2 only after the contract change)
 - [ ] Tuned once against a live camera with babarchechi during the evaluation session (Section 11)
 
 **Known limits — list them, don't hide them:** works best with the camera at roughly chest height, side-on to the
-person. A camera looking straight down makes torso angle unreliable. If the track ID changes mid-fall (occlusion), the
-new ID has no "fast drop" history, so it shows `ON_GROUND` rather than alerting. *Stretch:* a low-confidence
-`POSSIBLE_FALL` when someone has lain still for a long time (e.g. 20 s) even without a drop being seen.
+person. A camera looking straight down makes torso angle unreliable. Track ID changes and people lost from view after
+a fast drop become low-confidence alerts (6.2), but a slow collapse with no fast drop is only caught by the
+long-stillness stretch rule.
 
 ---
 
@@ -376,6 +419,9 @@ the skeleton. You also own the pitch deck and the live-demo script.
      doesn't crash on macOS.
    - The alert **stays until a human responds**: `c` = confirmed (I checked, they needed help), `f` = false alarm. If
      the person gets up before anyone responds, mark it "recovered" but keep the alert in the log.
+   - **Low-confidence alerts** (confidence ≤ 0.5, from Section 6.2 "When the picture is uncertain") still show the
+     full alert and still need `c`/`f`. Add a small "uncertain" tag and show the `reason`. If the team adopts the
+     out-of-frame status, an alert can arrive for a `track_id` with no skeleton on screen; show it anyway.
    - **Keys:** `c` confirm · `f` false alarm · `p` privacy mode on/off · `q` quit (`should_stop()` returns True).
    - Show fps and a small "PRIVACY MODE" or "LIVE" label.
    - **Alert log:** `outputs/alerts_<YYYYmmdd_HHMMSS>.csv` with columns
