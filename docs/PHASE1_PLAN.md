@@ -373,7 +373,8 @@ keeping `main` runnable, and running the evaluation sessions.
    - **Transition log:** write `outputs/transitions_<YYYYmmdd_HHMMSS>.csv` with columns
      `timestamp, track_id, from_state, to_state, confidence, reason`. Write only events; **never save images**.
      (`outputs/` is already git-ignored.)
-4. **`main.py`** — CLI: `--source` (default `0`), `--ui cv|web` (default `cv`), `--privacy` (start in skeleton-only
+4. **`main.py`** — CLI: `--source` (default `0`), `--rotate 0|90|180|270` (turn frames upright, e.g. `90` for a phone
+   in portrait), `--ui cv|web` (default `cv`), `--privacy` (start in skeleton-only
    mode), `--model` (default `yolo26n-pose.pt`). Builds `FrameSource`, `PostureAnalyzer`, the chosen dashboard and
    `Pipeline`, and always calls `close()` on everything in a `finally`.
 5. **Phone camera** — test an IP-camera app stream on a private hotspot (see README). Record the result in
@@ -540,7 +541,9 @@ At each checkpoint, post a short update in the team chat: done / next / blocked.
 Only **consenting teammates** on camera. Use a mat or cushions, and **never do a real, hard fall**: a controlled
 kneel-then-lie-on-side is enough. Nobody records video; we use the transition and alert CSVs only.
 
-Camera at roughly chest height, side-on, 2–4 m away. Repeat each scenario 5 times:
+Camera at roughly chest height, side-on, 2–4 m away. **Before starting, check that people appear upright on screen.**
+A phone in portrait needs `--rotate 90` (or `270`), otherwise everyone looks like they're lying down. Repeat each
+scenario 5 times:
 
 | # | Scenario | Expected |
 | --- | --- | --- |

@@ -19,8 +19,27 @@ no video recorded (CSV event logs only).
 
 ## Phone / IP camera stream
 
-Status: not tested yet.
+| Date | Phone / app | Network | Command | Result |
+| --- | --- | --- | --- | --- |
+| 2026-11-06 | iPhone, **DroidCam** ("PC Webcam" mode; no Windows client needed) | iPhone Personal Hotspot (laptop at 172.20.10.2) | `python src/main.py --source "http://172.20.10.1:4747/video"` | ✅ Skeleton and tracking ID work. The stream is MJPEG at 640×480 (free version). |
+| 2026-11-06 | Same, phone held in **portrait** | Same | add `--rotate 90` (PR #3) | ✅ People upright with skeletons |
+| 2026-11-06 | Android, **IP Webcam** (tested by iesa242) | | | Pending: add results here |
+
+How to set up the iPhone stream:
+1. In DroidCam, choose **PC Webcam** and ignore the prompt to install the client.
+2. Turn on *Personal Hotspot* with **Maximize Compatibility**, and connect the laptop to it.
+3. Use `http://172.20.10.1:4747/video`. That's the iPhone's address on its own hotspot; the "Wi-Fi IP" DroidCam shows also works but changes with the network.
+
+**Not tested yet:** automatic reconnect after the phone app is closed and reopened. It's covered only by fake-camera tests.
+
+## USB camera
+
+Status: not tested yet (camera not available on 2026-11-06). Plug it in and try `--source 1`.
 
 ## Observations and known limits
 
--
+- **Orientation matters for fall detection.** A phone in portrait streams sideways frames, so a standing person looks
+  horizontal, as if lying down. Always check people appear upright on screen, and use `--rotate 90` or `270` if not.
+- **eduroam** likely blocks phone-to-laptop streams. Use the phone's own hotspot.
+- **Keep the app awake:** on the iPhone, DroidCam must stay on screen with Auto-Lock off. iOS pauses the camera when
+  the app goes into the background.
