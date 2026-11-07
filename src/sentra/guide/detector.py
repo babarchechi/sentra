@@ -107,6 +107,12 @@ class ObjectDetector:
         self._inference_ms.append(inference_ms)
         return detection_frame_from_result(results[0], frame_id, timestamp, source, inference_ms)
 
+    def reset_tracking(self) -> None:
+        """Forget every track and restart IDs from 1, e.g. after switching cameras (old IDs mean nothing there)."""
+        predictor = getattr(self.model, "predictor", None)
+        for tracker in getattr(predictor, "trackers", None) or []:
+            tracker.reset()
+
     @property
     def median_inference_ms(self) -> float:
         """Median over the last 200 frames (0.0 before the first frame)."""

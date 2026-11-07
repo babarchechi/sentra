@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from sentra.guide.alerts import AlertConfig, AlertPolicy
+from sentra.guide.cameras import CameraChoice
 from sentra.guide.detector import ObjectDetector, detection_frame_from_result
 from sentra.guide.pipeline import GuideControls, GuidePipeline
 from sentra.guide.schema import Region
@@ -137,6 +138,228 @@ def test_frames_that_are_all_late_never_speak(tmp_path):
     stats = GuidePipeline(AgedSource([1.2] * 8), ObjectDetector(model=FakeModel(CHAIR_AHEAD)), HeadlessSink(),
                           speaker=speaker, output_dir=tmp_path).run()
     assert speaker.said == [] and stats.alerts == 0 and stats.stale_frames == 8
+
+
+# Camera switching ---------------------------------------------------------------------------------------
+
+class LiveSource:
+    """A camera that keeps delivering fresh frames until closed. `source` is what was opened."""
+
+    def __init__(self, source):
+        self.source = source
+        self.description = f"cam {source}"
+        self.closed = False
+
+    def read(self, timeout=1.0):
+        if self.closed:
+            return False, None, 0.0
+        time.sleep(0.005)  # ~200 fps: fast, but slow enough that a background camera switch can finish mid-run
+        return True, np.zeros((480, 640, 3), np.uint8), time.perf_counter()
+
+    def close(self):
+        self.closed = True
+
+
+class SwitchingSink(HeadlessSink):
+    """Asks for `choice` after `switch_after` frames; stops after `frames` frames or `max_idles` idle updates."""
+
+    def __init__(self, controls, choice, switch_after=4, frames=10, max_idles=500):
+        super().__init__()
+        self.controls, self.choice = controls, choice
+        self.switch_after, self.frames, self.max_idles = switch_after, frames, max_idles
+        self.sources, self.idles, self.sizes = [], [], []
+
+    def publish(self, update):
+        self.sources.append(update.frame.source)
+        self.sizes.append((update.frame.frame_width, update.frame.frame_height))
+        if len(self.sources) == self.switch_after:
+            self.controls.requested_camera = self.choice
+
+    def idle(self, message):
+        self.idles.append(message)
+
+    def should_stop(self):
+        return len(self.sources) >= self.frames or len(self.idles) >= self.max_idles
+
+
+def run_switch(choice, open_source, tmp_path, controls=None, **sink_options):
+    controls = controls or GuideControls(camera_label="Webcam 0", camera_source=0)
+    speaker = RecordingSpeaker()
+    sink = SwitchingSink(controls, choice, **sink_options)
+    first = LiveSource(0)
+    pipeline = GuidePipeline(first, ObjectDetector(model=FakeModel(CHAIR_AHEAD)), sink, speaker=speaker,
+                             controls=controls, output_dir=tmp_path, open_source=open_source)
+    resets = []
+    pipeline.detector.reset_tracking = lambda: resets.append(True)
+    pipeline.run()
+    return pipeline, controls, sink, speaker, first, resets
+
+
+def test_switching_cameras_closes_the_old_one_and_starts_fresh_on_the_new_one(tmp_path):
+    choice = CameraChoice("win:droid", "DroidCam Video", "windows:DroidCam Video")
+    pipeline, controls, sink, speaker, first, resets = run_switch(choice, LiveSource, tmp_path)
+    assert first.closed and pipeline.source.source == "windows:DroidCam Video"
+    assert (controls.camera_label, controls.camera_source) == ("DroidCam Video", "windows:DroidCam Video")
+    assert controls.requested_camera is None and not controls.switching
+    assert controls.notice == "Now using DroidCam Video" and pipeline.switches == 1
+    assert sink.sources[-1] == "cam windows:DroidCam Video"  # frames (and the event log) name the new camera
+    assert sink.idles and sink.idles[0] == "Switching to DroidCam Video..."  # the window kept updating
+    # Cues start fresh: the chair is announced again on the new camera, inside the old 10 s cooldown.
+    assert speaker.said == ["Chair ahead.", "Chair ahead."] and resets == [True]
+
+
+def test_a_camera_that_wont_open_goes_back_to_the_old_one(tmp_path):
+    def open_source(spec):
+        if spec == "windows:Broken":
+            raise RuntimeError("Cannot open camera source")
+        return LiveSource(spec)
+
+    choice = CameraChoice("win:broken", "Broken", "windows:Broken")
+    pipeline, controls, sink, _, first, _ = run_switch(choice, open_source, tmp_path)
+    assert len(sink.sources) == 10  # frames came back after the failed switch
+    assert first.closed and isinstance(pipeline.source, LiveSource) and pipeline.source is not first
+    assert pipeline.source.source == 0 and not pipeline.source.closed
+    assert (controls.camera_label, controls.camera_source) == ("Webcam 0", 0)
+    assert controls.notice == "Couldn't open Broken; back to Webcam 0" and pipeline.switches == 0
+
+
+def test_if_nothing_reopens_it_waits_for_another_pick_and_keeps_the_window_alive(tmp_path):
+    def open_source(spec):
+        raise RuntimeError("Cannot open camera source")
+
+    choice = CameraChoice("win:broken", "Broken", "windows:Broken")
+    pipeline, controls, sink, _, first, _ = run_switch(choice, open_source, tmp_path, max_idles=20)
+    assert pipeline.source is first and first.closed
+    assert controls.notice == "Couldn't open Broken. Pick another camera."
+    assert len(sink.idles) == 20  # no frames, but the sink kept getting idle updates (no busy spin, no freeze)
+
+
+def test_picking_the_camera_already_in_use_does_nothing(tmp_path):
+    choice = CameraChoice("cv:0", "Webcam 0", 0)
+    opened = []
+    pipeline, controls, sink, _, first, _ = run_switch(
+        choice, lambda spec: opened.append(spec) or LiveSource(spec), tmp_path)
+    assert opened == [] and pipeline.source is first and controls.requested_camera is None
+    assert sink.idles == [] and set(sink.sources) == {"cam 0"}
+
+
+def test_without_an_opener_a_switch_is_refused_with_a_message(tmp_path):
+    choice = CameraChoice("win:droid", "DroidCam Video", "windows:DroidCam Video")
+    pipeline, controls, sink, *_ = run_switch(choice, None, tmp_path)
+    assert controls.notice == "Camera switching isn't available in this mode"
+    assert set(sink.sources) == {"cam 0"} and controls.camera_source == 0
+
+
+def test_switching_to_a_stream_keeps_the_old_camera_running_until_it_connects(tmp_path):
+    def open_source(spec):
+        time.sleep(0.3)  # a phone stream takes a while to answer
+        return LiveSource(spec)
+
+    url = "http://10.0.0.7:4747/video"
+    choice = CameraChoice("url:1", "Stream 1 (port 4747)", url)
+    pipeline, controls, sink, _, first, resets = run_switch(choice, open_source, tmp_path, frames=150)
+    connecting = sink.sources[4:sink.sources.index(f"cam {url}")]
+    assert len(connecting) >= 3 and set(connecting) == {"cam 0"}  # video kept going while it connected
+    assert sink.idles == []                                        # never a blank "switching" screen
+    assert pipeline.source.source == url and controls.camera_label == "Stream 1 (port 4747)"
+    deadline = time.perf_counter() + 2.0
+    while not first.closed and time.perf_counter() < deadline:  # closed on a helper thread
+        time.sleep(0.01)
+    assert first.closed and resets == [True]
+
+
+def test_a_stream_that_wont_connect_leaves_the_old_camera_untouched(tmp_path):
+    def open_source(spec):
+        time.sleep(0.1)
+        raise RuntimeError("Cannot open camera source")
+
+    choice = CameraChoice("url:1", "Stream 1 (port 4747)", "http://10.0.0.7:4747/video")
+    pipeline, controls, sink, speaker, first, resets = run_switch(choice, open_source, tmp_path, frames=80)
+    assert pipeline.source is first and not first.closed and set(sink.sources) == {"cam 0"}
+    assert controls.notice == "Couldn't open Stream 1 (port 4747); still using Webcam 0"
+    assert resets == [] and speaker.said == ["Chair ahead."]  # same view: tracks and cooldowns kept
+
+
+def test_rotation_is_per_camera_and_comes_back_when_switching_back(tmp_path):
+    # Babar's case: an iPhone in portrait needs 90 degrees, the laptop camera 0.
+    controls = GuideControls(camera_label="iPhone", camera_source="iphone", rotation=90, rotations={"iphone": 90})
+    choice = CameraChoice("win:hp", "HP 5MP Camera", "windows:HP 5MP Camera")
+    pipeline, controls, sink, *_ = run_switch(choice, LiveSource, tmp_path, controls=controls)
+    assert sink.sizes[0] == (480, 640)   # 640x480 camera frames turned upright for the portrait phone
+    assert sink.sizes[-1] == (640, 480)  # the laptop camera isn't rotated
+    assert controls.rotation == 0 and controls.rotations["iphone"] == 90
+
+    # ...and back to the phone: its 90 degrees come back.
+    back = CameraChoice("url:1", "iPhone", "iphone")
+    pipeline2, controls, sink2, *_ = run_switch(back, LiveSource, tmp_path, controls=controls)
+    assert sink2.sizes[0] == (640, 480) and sink2.sizes[-1] == (480, 640) and controls.rotation == 90
+
+
+def test_r_key_rotation_turns_frames_and_starts_fresh(tmp_path):
+    class RotatingSink(HeadlessSink):
+        def __init__(self, controls):
+            super().__init__()
+            self.controls, self.sizes = controls, []
+
+        def publish(self, update):
+            self.sizes.append((update.frame.frame_width, update.frame.frame_height))
+            if len(self.sizes) == 4:
+                self.controls.rotate_clockwise()  # what r does in the window
+
+        def should_stop(self):
+            return len(self.sizes) >= 10
+
+    controls = GuideControls(camera_source=0)
+    speaker = RecordingSpeaker()
+    sink = RotatingSink(controls)
+    pipeline = GuidePipeline(LiveSource(0), ObjectDetector(model=FakeModel(CHAIR_AHEAD)), sink, speaker=speaker,
+                             controls=controls, output_dir=tmp_path)
+    resets = []
+    pipeline.detector.reset_tracking = lambda: resets.append(True)
+    pipeline.run()
+    assert sink.sizes[:4] == [(640, 480)] * 4 and sink.sizes[4:] == [(480, 640)] * 6
+    assert controls.rotation == 90 and controls.rotations == {0: 90} and resets == [True]
+    # The same box is now in the right third of a narrower frame, and the cooldown restarted:
+    assert speaker.said == ["Chair ahead.", "Chair to your right."]
+
+
+def test_a_stalled_camera_gives_idle_updates_and_then_says_it_is_waiting(tmp_path, monkeypatch):
+    import sentra.guide.pipeline as pipeline_module
+
+    monkeypatch.setattr(pipeline_module, "READ_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(pipeline_module, "WAITING_AFTER_S", 0.2)
+
+    class Stalled(LiveSource):
+        def read(self, timeout=1.0):
+            time.sleep(timeout)
+            return False, None, 0.0
+
+    class Sink(HeadlessSink):
+        idles = []
+
+        def idle(self, message):
+            self.idles.append(message)
+
+        def should_stop(self):
+            return "Waiting for the camera..." in self.idles
+
+    sink = Sink()
+    GuidePipeline(Stalled(0), ObjectDetector(model=FakeModel([])), sink, output_dir=tmp_path).run()
+    assert sink.idles[0] == "" and sink.idles[-1] == "Waiting for the camera..."
+
+
+def test_detector_reset_tracking_resets_every_tracker():
+    class Tracker:
+        resets = 0
+
+        def reset(self):
+            self.resets += 1
+
+    model = FakeModel([])
+    model.predictor = type("Predictor", (), {"trackers": [Tracker(), Tracker()]})()
+    ObjectDetector(model=model).reset_tracking()
+    assert [t.resets for t in model.predictor.trackers] == [1, 1]
+    ObjectDetector(model=FakeModel([])).reset_tracking()  # no tracker yet: nothing to do
 
 
 def test_detector_rejects_a_pose_model(monkeypatch):

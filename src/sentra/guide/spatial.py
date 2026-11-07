@@ -73,6 +73,10 @@ class SpatialEstimator:
         self._forget(frame.timestamp)
         return tuple(objects)
 
+    def reset(self) -> None:
+        """Forget remembered regions, e.g. after switching cameras."""
+        self._last_region.clear()
+
     def _forget(self, now: float) -> None:
         old = [tid for tid, (_, seen) in self._last_region.items() if now - seen > self.config.forget_after_s]
         for tid in old:

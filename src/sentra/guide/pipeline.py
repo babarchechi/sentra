@@ -4,17 +4,33 @@
                 -> AlertPolicy -> Speaker + GuideEventLog -> GuideSink (debug view)
 
 Kept separate from the fall-detection pipeline (sentra.pipeline), which still runs with src/main.py.
+
+Camera switching: the view puts a CameraChoice in `controls.requested_camera`. The pipeline opens the new camera on
+a background thread (opening can take seconds; see _CameraSwitch), keeps or goes back to the old camera if the new
+one won't open, and forgets tracks, regions and recent cues so nothing carries over from the old view.
+
+Rotation is per camera: `controls.rotation` is applied to each frame here (not in FrameSource), the r key changes
+it, and `controls.rotations` remembers it per camera so switching back restores it.
+
+While there is no frame to show (switching, or a stalled stream), a sink that has an `idle(message)` method gets
+called a few times a second, so a window keeps responding to keys and can say what's happening.
 """
 from __future__ import annotations
 
 import logging
+import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import median
 from typing import Any
 
+import cv2
+
+from sentra.capture import ROTATIONS
 from sentra.guide.alerts import AlertPolicy
+from sentra.guide.cameras import CameraChoice, is_stream
 from sentra.guide.depth import DepthProvider, NoDepth
 from sentra.guide.detector import ObjectDetector
 from sentra.guide.event_log import DEFAULT_OUTPUT_DIR, GuideEventLog
@@ -25,13 +41,79 @@ from sentra.pipeline import FpsMeter
 
 log = logging.getLogger(__name__)
 
+READ_TIMEOUT_S = 0.25   # how long to wait for a frame before giving the sink an idle update
+WAITING_AFTER_S = 1.0   # no frame for this long -> show "Waiting for the camera..."
+WARN_AFTER_S = 3.0      # ...and log a warning after this long
+
 
 @dataclass
 class GuideControls:
-    """Switches the user can flip while it runs (the debug view maps them to keys)."""
+    """Switches the user can flip while it runs (the debug view maps them to keys and the camera dropdown)."""
 
     muted: bool = False    # alerts still appear on screen and in the log, but aren't spoken
     privacy: bool = False  # the view hides the camera image and shows only boxes
+    camera_label: str = ""                       # the camera in use, as the dropdown names it
+    camera_source: int | str | None = None       # ...and what was opened for it
+    requested_camera: CameraChoice | None = None  # set by the view; the pipeline switches and clears it
+    switching: bool = False                      # a camera switch is in progress
+    notice: str = ""                             # short status line for the view
+    notice_at: float = 0.0                       # perf_counter when `notice` was set
+    rotation: int = 0                            # degrees clockwise applied to the current camera's frames
+    rotations: dict[int | str, int] = field(default_factory=dict)  # remembered rotation per camera source
+
+    def tell(self, notice: str) -> None:
+        self.notice, self.notice_at = notice, time.perf_counter()
+
+    def rotate_clockwise(self) -> None:
+        """Turn the current camera another 90 degrees (the r key). Remembered for that camera."""
+        self.rotation = (self.rotation + 90) % 360
+        if self.camera_source is not None:
+            self.rotations[self.camera_source] = self.rotation
+        self.tell(f"Rotation {self.rotation} degrees")
+
+
+class _CameraSwitch(threading.Thread):
+    """Open the new camera off the main thread.
+
+    - A phone stream (URL) is opened while the old camera keeps running (`keep_old`): a stream that isn't up yet
+      can take ~14 s to fail, and the video shouldn't go blank meanwhile. The main thread closes the old one after.
+    - A device is opened after closing the old camera (a webcam can usually be open in only one place), and the
+      old camera is reopened if the new one fails.
+    """
+
+    def __init__(self, old: Any, choice: CameraChoice, open_source: Callable[[int | str], Any]) -> None:
+        super().__init__(name="CameraSwitch", daemon=True)
+        self.old, self.choice, self.open_source = old, choice, open_source
+        self.keep_old = is_stream(choice.source)
+        self.new: Any = None
+        self.reopened: Any = None
+        self.error: Exception | None = None
+
+    def run(self) -> None:
+        if self.keep_old:
+            try:
+                self.new = self.open_source(self.choice.source)
+            except Exception as exc:
+                self.error = exc
+            return
+        _close(self.old)
+        try:
+            self.new = self.open_source(self.choice.source)
+            return
+        except Exception as exc:  # FrameSource raises RuntimeError when a camera won't open
+            self.error = exc
+        old_spec = getattr(self.old, "source", None)
+        if old_spec is not None:
+            try:
+                self.reopened = self.open_source(old_spec)
+            except Exception as exc:
+                log.warning("Could not reopen the previous camera either: %s", exc)
+
+
+def _close(source: Any) -> None:
+    close = getattr(source, "close", None)
+    if close is not None:
+        close()
 
 
 @dataclass
@@ -82,6 +164,7 @@ class GuidePipeline:
         output_dir: Path = DEFAULT_OUTPUT_DIR,
         label: str | None = None,
         clock=time.perf_counter,
+        open_source: Callable[[int | str], Any] | None = None,  # opens a camera for a switch; None = no switching
     ) -> None:
         self.source = source
         self.detector = detector
@@ -93,9 +176,17 @@ class GuidePipeline:
         self.controls = controls or GuideControls()
         self.output_dir = output_dir
         self.label = label
+        self.open_source = open_source
         self._clock = clock
+        self._switch: _CameraSwitch | None = None
+        self._applied_rotation = self.controls.rotation
+        self.switches = 0
         self.stats = RunStats()
         self.log_path: Path | None = None
+        if self.controls.camera_source is None:
+            self.controls.camera_source = getattr(source, "source", None)
+        if not self.controls.camera_label:
+            self.controls.camera_label = getattr(source, "description", "")
 
     def run(self) -> RunStats:
         """Process frames until the sink says stop, a video file ends, or Ctrl+C."""
@@ -104,24 +195,34 @@ class GuidePipeline:
         self.log_path = event_log.path
         log.info("Logging alerts (no images) to %s", event_log.path)
         fps = FpsMeter()
-        description = getattr(self.source, "description", "")
         frame_id = 0
-        missed_reads = 0
+        last_frame_at = time.perf_counter()
+        warned = False
         started = self._clock()
         try:
             while not self.sink.should_stop():
-                ok, image, timestamp = self.source.read(timeout=1.0)
+                if self._poll_switch() and not self._switch.keep_old:  # old camera closed: nothing to show yet
+                    self._idle(self.controls.notice)
+                    time.sleep(0.03)
+                    last_frame_at = time.perf_counter()
+                    continue
+                ok, image, timestamp = self.source.read(timeout=READ_TIMEOUT_S)
                 if not ok:
                     if getattr(self.source, "ended", False):
                         log.info("Video file finished.")
                         break
-                    missed_reads += 1
-                    if missed_reads == 3:
+                    waited = time.perf_counter() - last_frame_at
+                    if waited >= WARN_AFTER_S and not warned:
                         log.warning("Waiting for frames from the camera... (q or Ctrl+C to quit)")
+                        warned = True
+                    self._idle("Waiting for the camera..." if waited >= WAITING_AFTER_S else "")
+                    time.sleep(0.01)  # a closed source returns at once; don't spin
                     continue
-                missed_reads = 0
+                last_frame_at, warned = time.perf_counter(), False
                 frame_id += 1
+                image = self._rotate(image)
 
+                description = getattr(self.source, "description", "")
                 frame = self.detector.detect(image, frame_id, timestamp, description)
                 depths = self.depth.estimate(image, frame)
                 objects = self.spatial.locate(frame, depths)
@@ -154,4 +255,100 @@ class GuidePipeline:
             self.stats.seconds = self._clock() - started
             event_log.write_summary(self.stats.as_dict())
             event_log.close()
+            self._abandon_switch()
         return self.stats
+
+    # Camera switching ------------------------------------------------------------------------------------
+
+    def _poll_switch(self) -> bool:
+        """Start a requested camera switch, or finish one that's done. True while a switch is running."""
+        if self._switch is not None:
+            if self._switch.is_alive():
+                return True
+            self._finish_switch()
+            return False
+        choice = self.controls.requested_camera
+        if choice is None:
+            return False
+        self.controls.requested_camera = None
+        if choice.source == self.controls.camera_source:
+            return False
+        if self.open_source is None:
+            self.controls.tell("Camera switching isn't available in this mode")
+            return False
+        log.info("Switching camera to %s ...", choice.label)
+        if self.controls.camera_source is not None:  # remember this camera's rotation for when we come back
+            self.controls.rotations[self.controls.camera_source] = self.controls.rotation
+        self.controls.switching = True
+        self._switch = _CameraSwitch(self.source, choice, self.open_source)
+        verb = "Connecting to" if self._switch.keep_old else "Switching to"
+        self.controls.tell(f"{verb} {choice.label}...")
+        self._switch.start()
+        return True
+
+    def _finish_switch(self) -> None:
+        switch, self._switch = self._switch, None
+        self.controls.switching = False
+        if switch.keep_old and switch.new is None:
+            # The old camera never stopped, so nothing on screen changed: keep its tracks, regions and cues.
+            self.controls.tell(f"Couldn't open {switch.choice.label}; still using {self.controls.camera_label}")
+            log.warning("Could not open %s (%s); still using %s",
+                        switch.choice.label, switch.error, self.controls.camera_label)
+            return
+        if switch.new is not None:
+            if switch.keep_old:  # closing can take a moment (it waits for the reader thread): not on this thread
+                threading.Thread(target=_close, args=(switch.old,), name="CloseOldCamera", daemon=True).start()
+            self.source = switch.new
+            self.controls.camera_label = switch.choice.label
+            self.controls.camera_source = switch.choice.source
+            self.controls.tell(f"Now using {switch.choice.label}")
+            self.switches += 1
+            log.info("Camera: %s", switch.choice.label)
+        elif switch.reopened is not None:
+            self.source = switch.reopened
+            self.controls.tell(f"Couldn't open {switch.choice.label}; back to {self.controls.camera_label}")
+            log.warning("Could not open %s (%s); went back to %s",
+                        switch.choice.label, switch.error, self.controls.camera_label)
+        else:
+            self.source = switch.old  # closed: read() keeps failing until another camera is picked
+            self.controls.tell(f"Couldn't open {switch.choice.label}. Pick another camera.")
+            log.warning("Could not open %s (%s), and the previous camera didn't reopen",
+                        switch.choice.label, switch.error)
+        # Whatever is on screen now is a different view: forget track IDs, remembered regions and recent cues,
+        # and use the rotation remembered for this camera (0 for one never rotated).
+        self.controls.rotation = self.controls.rotations.get(self.controls.camera_source, 0)
+        self._applied_rotation = self.controls.rotation
+        self._reset_scene()
+
+    def _abandon_switch(self) -> None:
+        """On exit: let a running switch finish (briefly) and close whatever it opened."""
+        switch, self._switch = self._switch, None
+        if switch is None:
+            return
+        switch.join(timeout=5.0)
+        if switch.keep_old:  # the old camera is still self.source (closed by the caller); drop the new one
+            _close(switch.new)
+            return
+        for opened in (switch.new, switch.reopened):
+            if opened is not None:
+                self.source = opened  # so the caller's close() reaches it
+
+    def _rotate(self, image: Any) -> Any:
+        """Turn the frame upright with the current camera's rotation. A new rotation is a new view: start fresh."""
+        rotation = self.controls.rotation
+        if rotation != self._applied_rotation:
+            self._applied_rotation = rotation
+            self._reset_scene()
+        code = ROTATIONS.get(rotation)
+        return image if code is None else cv2.rotate(image, code)
+
+    def _reset_scene(self) -> None:
+        """Forget track IDs, remembered regions and recent cues (after a camera switch or rotation)."""
+        self.detector.reset_tracking()
+        self.spatial.reset()
+        self.policy.reset()
+
+    def _idle(self, message: str) -> None:
+        idle = getattr(self.sink, "idle", None)
+        if idle is not None:
+            idle(message)

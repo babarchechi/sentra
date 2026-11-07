@@ -357,6 +357,13 @@ class TeeSink:
         for sink in self.sinks:
             sink.publish(update)
 
+    def idle(self, message: str = "") -> None:
+        """No new frame (switching cameras, stalled stream): pass it on to the sinks that can show it."""
+        for sink in self.sinks:
+            idle = getattr(sink, "idle", None)
+            if idle is not None:
+                idle(message)
+
     def should_stop(self) -> bool:
         return any(sink.should_stop() for sink in self.sinks)
 

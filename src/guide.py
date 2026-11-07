@@ -10,6 +10,11 @@ Run from the repo root (docs/SETUP_WINDOWS.md has phone instructions):
     python src/guide.py --source 0 --web --web-host 172.20.10.2      also speak cues on a phone browser
                                                                      (open http://172.20.10.2:8765/ on the phone)
 
+In the window, switch cameras with the "Camera:" dropdown (or press c). It lists every camera Windows can see,
+updated while it's open; phone streams can't be discovered, so list them with --extra-source, each with its own
+rotation (--rotate is for --source only). Press r to turn the current camera another 90 degrees.
+    python src/guide.py --source 0 --extra-source http://<iphone-ip>:4747/video 90 --extra-source http://<android-ip>:8080/video
+
 The fall-detection prototype is unchanged: python src/main.py
 """
 from __future__ import annotations
@@ -19,6 +24,7 @@ import logging
 
 from sentra.capture import FrameSource, parse_source
 from sentra.guide.alerts import AlertConfig, AlertPolicy
+from sentra.guide.cameras import CameraCatalog, is_stream
 from sentra.guide.detector import DEFAULT_DETECT_MODEL, ObjectDetector
 from sentra.guide.pipeline import GuideControls, GuidePipeline
 from sentra.guide.spatial import SpatialEstimator
@@ -35,8 +41,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--source", default="0",
                         help="Webcam index (0), phone stream URL, or path to a consented local video file")
+    parser.add_argument("--extra-source", action="append", nargs="+", default=[], metavar=("URL", "ROTATION"),
+                        help="Another phone stream for the camera dropdown, optionally with its rotation "
+                             "(e.g. --extra-source http://<iphone-ip>:4747/video 90). Repeatable")
     parser.add_argument("--rotate", type=int, choices=(0, 90, 180, 270), default=0,
-                        help="Rotate frames clockwise so the image is upright (phones in portrait: 90 or 270)")
+                        help="Rotate --source's frames clockwise so the image is upright (phones in portrait: 90 or "
+                             "270). Other cameras use their own rotation; r in the window turns the current one")
     parser.add_argument("--model", default=DEFAULT_DETECT_MODEL, help="Detection weights (default yolo26n.pt)")
     parser.add_argument("--conf", type=float, default=0.25, help="Detector score threshold (default 0.25)")
     parser.add_argument("--announce-conf", type=float, default=0.5,
@@ -101,8 +111,29 @@ def start_web_page(args: argparse.Namespace, controls: GuideControls) -> WebSpee
     return page
 
 
+def parse_extra_sources(values: list[list[str]]) -> list[tuple[str, int]]:
+    """--extra-source URL [ROTATION] (repeatable) -> [(url, rotation)]. Raises ValueError on a bad value."""
+    extras = []
+    for value in values:
+        if not 1 <= len(value) <= 2:
+            raise ValueError("--extra-source takes a URL and, optionally, a rotation: 0, 90, 180 or 270")
+        url = value[0]
+        if not is_stream(url):
+            raise ValueError(f"--extra-source needs a stream URL (http://...), got {url!r}")
+        rotation = value[1] if len(value) == 2 else "0"
+        if rotation not in ("0", "90", "180", "270"):
+            raise ValueError(f"--extra-source rotation must be 0, 90, 180 or 270, got {rotation!r}")
+        extras.append((url, int(rotation)))
+    return extras
+
+
 def main() -> None:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    try:
+        extras = parse_extra_sources(args.extra_source)
+    except ValueError as exc:
+        parser.error(str(exc))
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
     logging.getLogger("sentra").setLevel(logging.INFO)
 
@@ -113,15 +144,30 @@ def main() -> None:
     except (ValueError, FileNotFoundError) as exc:
         raise SystemExit(str(exc)) from None
 
-    controls = GuideControls(muted=args.muted, privacy=args.privacy)
+    first = parse_source(args.source)
+    controls = GuideControls(muted=args.muted, privacy=args.privacy, camera_source=first)
     page = start_web_page(args, controls) if args.web else None  # before the camera, so a busy port fails fast
 
+    streams = [s for s in [args.source, *(url for url, _ in extras)] if is_stream(s)]
+    cameras = None if args.no_view else CameraCatalog(streams)
+    if cameras is not None:
+        cameras.refresh(force=True)  # list the connected cameras in the background while the camera opens
+    # Rotation belongs to each camera (a portrait phone needs 90, the laptop camera 0). The pipeline applies it,
+    # and r in the window turns the current camera another 90 degrees.
+    controls.rotations = {url: rotation for url, rotation in extras}
+    controls.rotations[first] = args.rotate
+    controls.rotation = args.rotate
+
+    def open_source(spec: int | str) -> FrameSource:
+        return FrameSource(spec, open_timeout_s=10.0)
+
     try:
-        source = FrameSource(parse_source(args.source), rotate=args.rotate)
+        source = FrameSource(first)
     except RuntimeError as exc:
         if page is not None:
             page.close()
         raise SystemExit(str(exc)) from None
+    controls.camera_label = cameras.label_for(first) if cameras else source.description
     rotation = f", rotated {args.rotate} degrees" if args.rotate else ""
     log.info("Camera: %s%s. Experimental: not a navigation aid.", source.description, rotation)
 
@@ -131,15 +177,15 @@ def main() -> None:
     if args.no_view:
         sink = HeadlessSink(args.max_seconds)
     else:
-        sink = GuideView(controls, policy, spatial.config, voice_name=args.voice)
+        sink = GuideView(controls, policy, spatial.config, voice_name=args.voice, cameras=cameras)
         if args.max_seconds is not None:
             log.warning("--max-seconds only applies with --no-view; press q to quit the window.")
-        log.info("Click the video window, then: m mute, p privacy, q quit.")
+        log.info("Click the video window, then: c cameras, r rotate, m mute, p privacy, q quit.")
     if page is not None:
         sink = TeeSink(sink, page)
 
     pipeline = GuidePipeline(source, detector, sink, speaker=speaker, spatial=spatial, policy=policy,
-                             controls=controls, label=args.label)
+                             controls=controls, label=args.label, open_source=open_source)
     try:
         pipeline.run()
     except KeyboardInterrupt:
@@ -147,6 +193,8 @@ def main() -> None:
     finally:
         sink.close()
         source.close()
+        if pipeline.source is not source:
+            pipeline.source.close()  # the camera picked in the dropdown
         if speaker is not None:
             speaker.close()
             if speaker.failed:
