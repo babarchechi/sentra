@@ -79,11 +79,14 @@ FALL_ANGLE = [(0, 5), (2.0, 5), (2.5, 85)]
 FALL_HIPS = [(0, STAND_Y), (2.0, STAND_Y), (2.5, FLOOR_Y)]
 
 
-def run(scene, duration, fps=10.0, jitter=False, seed=0, analyzer=None):
-    """Feed `scene(t) -> list[PersonPose]` to an analyzer. Returns [(t, {track_id: PersonStatus})]."""
+def run(scene, duration, fps=10.0, jitter=False, seed=0, analyzer=None, t0=0.0):
+    """Feed `scene(t) -> list[PersonPose]` to an analyzer. Returns [(t, {track_id: PersonStatus})].
+
+    `t0` shifts the first frame time, to test different frame phases against the same scene.
+    """
     analyzer = analyzer or PostureAnalyzer()
     rng = random.Random(seed)
-    t, out = 0.0, []
+    t, out = t0, []
     while t <= duration + 1e-9:
         statuses = analyzer.update(make_frame(*scene(t), timestamp=t))
         out.append((t, {s.track_id: s for s in statuses}))
@@ -306,3 +309,92 @@ def test_since_is_when_the_state_started():
     timeline = run(lambda t: [moving_body(FALL_ANGLE, FALL_HIPS)(t)], 9.0)
     alert_at = first_time(timeline, FALL)
     assert timeline[-1][1][1].since == pytest.approx(alert_at)
+
+
+# --- Regression tests from the review of PR #6 ----------------------------------------------------
+
+
+def lean_fall(lean, fall_s):
+    """Leaning `lean` degrees forward, then the torso and hips fall together over `fall_s` seconds."""
+    return moving_body([(0, lean), (2.0, lean), (2.0 + fall_s, 85)], [(0, STAND_Y), (2.0, STAND_Y), (2.0 + fall_s, FLOOR_Y)])
+
+
+@pytest.mark.parametrize("fall_s", [0.5, 0.7])
+@pytest.mark.parametrize("lean", [5, 20, 25, 30, 35, 40])
+def test_fall_from_a_forward_lean_alerts_at_every_frame_phase(lean, fall_s):
+    # Review item 1: a wide box could flip posture to LYING before the hip-speed window saw the drop.
+    pose_at = lean_fall(lean, fall_s)
+    runs = [run(lambda t: [pose_at(t)], 9.5, t0=phase / 200) for phase in range(20)]  # 20 phases of a 10 fps clock
+    runs += [run(lambda t: [pose_at(t)], 9.5, jitter=True, seed=seed) for seed in range(20)]
+    alert_times = [first_time(timeline, FALL) for timeline in runs]
+    assert all(a is not None for a in alert_times), f"missed {alert_times.count(None)}/40"
+    landing = 2.0 + fall_s
+    assert all(landing + 4.0 <= a <= landing + 6.0 for a in alert_times)
+
+
+def test_a_stray_frame_does_not_backdate_recovery():
+    # Review item 2: fall -> alert; at 9.0 s one frame reads 20 degrees; propped up at 45 degrees until 12.0 s,
+    # then sitting up fully. The alert must stay until ~recovery_s after 12.0 s, not clear at 12.1 s.
+    fall = moving_body(FALL_ANGLE, FALL_HIPS)
+
+    def scene(t):
+        if t < 8.95:
+            return [fall(t)]
+        if t < 9.05:
+            return [body(angle=20, hip_y=FLOOR_Y)]  # one glitch frame
+        if t < 12.0:
+            return [body(angle=45, hip_y=FLOOR_Y)]
+        return [body(angle=5, hip_y=FLOOR_Y - 40)]
+
+    timeline = run(scene, 16.0)
+    cleared_at = next(t for t, st in states(timeline) if t > 9.0 and st is not FALL)
+    assert cleared_at >= 12.0 + 2.0
+
+
+def test_stray_frames_do_not_shorten_the_on_ground_timer():
+    # Same glitch while lying after a fast drop: the alert still needs ~5 s on the ground.
+    fall = moving_body(FALL_ANGLE, FALL_HIPS)
+    scene = lambda t: [body(angle=20, hip_y=FLOOR_Y) if abs(t - 4.0) < 0.05 else fall(t)]  # noqa: E731
+    alert_at = first_time(run(scene, 9.0), FALL)
+    assert alert_at is not None and alert_at >= 2.3 + 5.0
+
+
+def test_torso_hidden_after_a_fall_alert_keeps_its_confidence():
+    # Review item 3: torso keypoints fading on a lying person must not turn a clear alert into conf 0.00.
+    fall = moving_body(FALL_ANGLE, FALL_HIPS)
+    scene = lambda t: [fall(t) if t < 8.5 else body(angle=85, hip_y=FLOOR_Y, torso_conf=0.2)]  # noqa: E731
+    timeline = run(scene, 12.0)
+    before = [s[1] for t, s in timeline if 8.0 <= t < 8.5]
+    after = [s[1] for t, s in timeline if t >= 9.0]
+    assert all(s.state is FALL for s in before + after)
+    assert all(s.confidence > 0.5 for s in after)
+    assert after[-1].confidence == pytest.approx(before[-1].confidence)
+    assert "torso hidden" in after[-1].reason
+
+
+def test_hidden_alert_upgrades_once_the_person_is_seen_lying():
+    # Review item 4: fast drop -> hidden 6 s (low-confidence alert) -> clearly visible lying again.
+    fall = moving_body(FALL_ANGLE, FALL_HIPS)
+
+    def scene(t):
+        if t < 2.5:
+            return [fall(t)]
+        if t < 8.5:
+            return [body(angle=85, hip_y=FLOOR_Y, torso_conf=0.2)]
+        return [body(angle=85, hip_y=FLOOR_Y)]
+
+    timeline = run(scene, 11.0)
+    hidden = [s[1] for t, s in timeline if 7.6 <= t < 8.5]
+    assert hidden and all(s.state is FALL and s.confidence <= 0.5 for s in hidden)
+    final = timeline[-1][1][1]
+    assert final.state is FALL
+    assert final.confidence > 0.5
+    assert "after fast drop" in final.reason and "lost from view" not in final.reason
+
+
+def test_first_seen_at_an_in_between_angle_is_not_unknown():
+    # Review item 5: someone reclined when the app starts has visible hips and shoulders, so not UNKNOWN.
+    for angle in (40, 45, 50):
+        (status,) = PostureAnalyzer().update(make_frame(body(angle=angle), timestamp=0.0))
+        assert status.state is not PostureState.UNKNOWN, angle
+        assert "not visible" not in status.reason

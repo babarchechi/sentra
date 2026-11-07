@@ -45,6 +45,7 @@ class PostureConfig:
     on_ground_alert_s: float = 5.0        # seconds on the ground before POSSIBLE_FALL (short for the demo)
     recovery_s: float = 2.0               # upright this long clears POSSIBLE_FALL
     state_hold_frames: int = 3            # frames a new posture must persist before switching
+    pending_max_age_s: float = 1.0        # ...and they must all fall within this long, or the count starts over
     track_timeout_s: float = 3.0          # forget a track not seen for this long
     lost_memory_s: float = 10.0           # keep a track that vanished after a fast drop this long, to re-match it
     lost_match_iou: float = 0.3           # box overlap needed to treat a new track ID as that lost person
@@ -83,6 +84,7 @@ class _Track:
     still_since: float | None = None
     alert_since: float | None = None
     alert_kind: str = ""                  # "fall", "hidden" or "still"
+    alert_conf: float = 0.0               # last confidence computed while the torso was visible
     state: PostureState = PostureState.UNKNOWN
     since: float = 0.0
     last_seen: float = 0.0
@@ -172,7 +174,10 @@ class PostureAnalyzer:
         posture = track.posture
 
         speed = self._hip_speed(track, t, scale)
-        if (speed is not None and speed >= cfg.descent_speed and posture != LYING
+        # A drop counts until shortly after lying starts: from a forward lean the wide box can make posture flip to
+        # LYING (~50 degrees) before the hip-speed window has seen the drop (review of #6, item 1).
+        lying_just_started = posture == LYING and t - track.posture_since <= cfg.descent_window_s
+        if (speed is not None and speed >= cfg.descent_speed and (posture != LYING or lying_just_started)
                 and track.alert_since is None and track.fall_lying_since is None):
             if track.drop_at is None or t - track.drop_at > cfg.descent_window_s:
                 track.drop_at, track.drop_speed = t, speed
@@ -202,7 +207,13 @@ class PostureAnalyzer:
         elif posture == LYING:
             if (track.fall_lying_since is None and track.drop_at is not None
                     and track.posture_since - track.drop_at <= cfg.descent_window_s):
-                track.fall_lying_since = track.posture_since
+                # On the ground from whichever came later: lying posture or the drop itself.
+                track.fall_lying_since = max(track.posture_since, track.drop_at)
+            if track.alert_kind == "hidden":
+                # Seen lying again after a hidden-person alert: it's an ordinary fall alert now (item 4).
+                track.alert_kind = "fall"
+                if track.fall_lying_since is None:
+                    track.fall_lying_since = track.posture_since
 
         if track.alert_since is None:
             self._maybe_alert(track, posture, t)
@@ -234,7 +245,7 @@ class PostureAnalyzer:
 
     @staticmethod
     def _clear_fall(track: _Track) -> None:
-        track.alert_since, track.alert_kind = None, ""
+        track.alert_since, track.alert_kind, track.alert_conf = None, "", 0.0
         track.drop_at, track.drop_speed = None, 0.0
         track.fall_lying_since = None
         track.still_since = None
@@ -253,13 +264,20 @@ class PostureAnalyzer:
                 reason = (f"fast drop, then hips/shoulders hidden for {hidden_for:.0f} s" if posture == HIDDEN
                           else "fast drop, then lost from view")
             elif track.alert_kind == "still":
-                conf = min(cfg.uncertain_confidence_max, feats.conf * 0.6)
+                if angle is not None:
+                    track.alert_conf = min(cfg.uncertain_confidence_max, feats.conf * 0.6)
+                conf = track.alert_conf
                 reason = f"lying still for {t - (track.still_since or track.alert_since):.0f} s, no fall seen"
             else:
-                conf = feats.conf * (0.5 + 0.3 * _lying_margin(angle, cfg) + 0.2 * still)
                 down_for = t - track.fall_lying_since if track.fall_lying_since is not None else 0.0
-                reason = (f"torso {angle:.0f}° for {down_for:.1f} s after fast drop{still_text}"
-                          if angle is not None else "on the ground after fast drop")
+                if angle is not None:
+                    track.alert_conf = feats.conf * (0.5 + 0.3 * _lying_margin(angle, cfg) + 0.2 * still)
+                    reason = f"torso {angle:.0f}° for {down_for:.1f} s after fast drop{still_text}"
+                else:
+                    # Torso keypoints often fade on someone lying down. The fall was already seen clearly, so keep
+                    # its last confidence instead of dropping to 0 and looking "uncertain" (item 3).
+                    reason = f"on the ground {down_for:.1f} s after fast drop (torso hidden)"
+                conf = track.alert_conf or cfg.uncertain_confidence_max  # torso hidden ever since the alert fired
             if posture == UPRIGHT:
                 reason = f"possible fall; upright again for {t - track.posture_since:.1f} s"
             return PostureState.POSSIBLE_FALL, conf, reason
@@ -322,10 +340,15 @@ class PostureAnalyzer:
         return None
 
     def _debounce(self, track: _Track, raw: str | None, t: float) -> None:
-        if raw is None:
-            return
+        """A new posture must be seen in state_hold_frames frames, all within pending_max_age_s."""
         if track.posture is None:  # first sighting: nothing to flicker from
-            track.posture, track.posture_since = raw, t
+            # In-between angles aren't lying by our rules (too upright, box not wide), so start as upright (item 5).
+            track.posture, track.posture_since = raw or UPRIGHT, t
+            return
+        if track.pending is not None and t - track.pending_since > self.config.pending_max_age_s:
+            # A stray frame must not wait for seconds and then backdate posture_since (item 2).
+            track.pending, track.pending_count = None, 0
+        if raw is None:  # in-between angle: no evidence either way
             return
         if raw == track.posture:
             track.pending, track.pending_count = None, 0
