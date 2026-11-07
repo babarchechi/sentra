@@ -264,6 +264,25 @@ def test_active_policy_controls_which_boxes_explain_obstacles():
         assert s.augment(frame(det), policy=policy).detections == (det,)
 
 
+@pytest.mark.parametrize("reset", [False, True])
+def test_scan_replaced_during_assessment_only_invalidates_on_reset(monkeypatch, reset):
+    s = scanner(room(box=(26, 36, 30)))
+    scan_twice(s)
+    original = s._explained
+
+    def replace_during_assessment(scan, f, **kwargs):
+        if reset:
+            s.reset()
+        s.submit(IMAGE, 0.0)
+        return original(scan, f, **kwargs)
+
+    monkeypatch.setattr(s, "_explained", replace_during_assessment)
+    result = s.assess(frame())
+    assert (result.obstacle is None) == reset
+    if not reset:
+        assert result.status.startswith(OBSTRUCTION)
+
+
 def test_reset_discards_a_background_scan_already_running():
     started, release = threading.Event(), threading.Event()
 

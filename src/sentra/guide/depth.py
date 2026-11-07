@@ -55,6 +55,7 @@ def box_depth(
     min_confidence: float = 0.0,
     shrink: float = 0.5,
     min_valid_fraction: float = 0.3,
+    percentile: float = 50.0,
 ) -> tuple[float | None, float]:
     """Robust distance to one detected object from a depth map. Returns (meters or None, valid fraction).
 
@@ -64,7 +65,9 @@ def box_depth(
       with a known object first: a crop or rotation difference makes this scaling wrong.
     - Only the central `shrink` share of the box is used, so background around the object counts less.
     - Pixels that are non-finite, <= 0, or below `min_confidence` in `confidence` are ignored.
-    - The median of the remaining pixels is returned, or None if fewer than `min_valid_fraction` are valid.
+    - The median of the remaining pixels is returned (or another `percentile`: a low one such as 20 measures the
+      nearest surfaces, which suits see-through objects like chairs), or None if fewer than `min_valid_fraction`
+      are valid.
     """
     frame_w, frame_h = frame_size
     depth_h, depth_w = depth_m.shape[:2]
@@ -84,4 +87,4 @@ def box_depth(
     fraction = float(valid.mean()) if valid.size else 0.0
     if fraction < min_valid_fraction:
         return None, fraction
-    return float(np.median(patch[valid])), fraction
+    return float(np.percentile(patch[valid], percentile)), fraction

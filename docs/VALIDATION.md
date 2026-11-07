@@ -135,10 +135,17 @@ then at the edge.
 
 | Date | Adapter | Object | True m | Estimated m (3 readings) | Error | Valid depth % | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| | | chair | 1.0 | | | | |
-| | | chair | 2.0 | | | | |
-| | | chair | 3.0 | | | | |
+| 2026-11-07 | yolo26n-depth, **uncalibrated**, box median | chair (Babar's iPhone, DroidCam, portrait, eduroam) | 0.99 | 5.4–6.2 (medians of 3 runs) | **+450–530%** | ~100 | First runs picked far-away chairs; with only the test chair in view still 6.0 m. Floor just in front of the phone read 2.4–3.2 m (should be ~1–1.5) |
+| 2026-11-07 | same, nearest 20% of box | chair | 0.99 | 6.22, then **3.05** after the phone was moved | +529% / +208% | ~100 | The correction factor this implies changed from 0.159 to 0.325 just by moving the phone: **calibration only holds for one setup** |
+| 2026-11-07 | same, **calibrated** at 0.99 m (`--scale 0.325`), phone fixed | chair | 2.03 (80 in) | 2.41 (10–90%: 2.23–2.57) | **+0.38 m (+19%)** | ~100 | |
+| 2026-11-07 | same, calibrated, phone fixed | chair | 3.00 (118 in) | 3.42 (10–90%: 3.22–3.66) | **+0.42 m (+14%)** | ~100 | Consistently ~0.4 m too far |
 | | | person | 2.0 | | | | |
+
+**Verdict (2026-11-07):** uncalibrated estimates are unusable (3–6x too far). With a 1-point calibration for that exact
+phone position, errors were 14–19% at 2–3 m: good enough to **show on screen as "est."**, not to speak (the spoken
+bar is about 10 cm or 10%). Recalibrate whenever the phone or scene changes:
+`python src/depth_check.py --source <camera> --rotate 90 --true <meters> --calibrate`, then run Sentra Guide with
+`--depth estimate --depth-scale <factor>`. Readings are the median of ~70 frames over 8 s, one object in view.
 
 Pass/fail thresholds are in DEPTH_OPTIONS.md ("Decision rule"). Agree on them before measuring.
 

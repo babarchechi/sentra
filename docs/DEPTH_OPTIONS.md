@@ -3,6 +3,9 @@
 > **The demo must work with option A.** B and C are optional experiments. Neither may block or slow down the
 > camera-only demo. No purchase is made without a teammate's explicit OK in the chat.
 
+Status on 2026-11-07: **options A and B (with YOLO26n-depth instead of Depth Anything) exist in code.** B is off by
+default (`--depth estimate`), tape-tested, and shown on screen only (VALIDATION.md, Section 4).
+
 Status on 2026-11-06: **only option A exists in code.** `src/sentra/guide/depth.py` defines the `DepthProvider`
 interface, `NoDepth`, and a `box_depth()` helper that B and C should both use.
 
@@ -14,6 +17,11 @@ interface, `NoDepth`, and a `box_depth()` helper that B and C should both use.
 - Cost: $0. Status: ✅ verified on the laptop webcam, 2026-11-06.
 
 ## Option B: Depth Anything V2 Small, metric indoor (free, estimated from the RGB image)
+
+> **Update 2026-11-07:** built with Ultralytics' `yolo26n-depth.pt` instead (same idea, already in our library,
+> ~62 ms per frame): `src/sentra/guide/depth_yolo.py`, `python src/guide.py --depth estimate --depth-scale <factor>`.
+> Tape test: 3–6x too far uncalibrated; 14–19% error at 2–3 m after a 1-point calibration, but the calibration
+> changed 2x when the phone moved. Shown on screen as "est.", never spoken. Depth Anything was not tried.
 
 | | |
 | --- | --- |

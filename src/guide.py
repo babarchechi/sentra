@@ -27,6 +27,7 @@ from sentra.guide.alerts import AlertConfig, AlertPolicy
 from sentra.guide.cameras import CameraCatalog, is_stream
 from sentra.guide.detector import DEFAULT_DETECT_MODEL, ObjectDetector
 from sentra.guide.obstacles import ENVIRONMENTS, ObstacleScanner
+from sentra.guide.depth_yolo import DEFAULT_DEPTH_MODEL, YoloDepth
 from sentra.guide.person_check import DEFAULT_POSE_MODEL, PersonCheck
 from sentra.guide.pipeline import GuideControls, GuidePipeline
 from sentra.guide.spatial import SpatialEstimator
@@ -57,6 +58,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-track", action="store_true",
                         help="Turn off ByteTrack (detections only). With --person-check, the pose model then runs "
                              "more often (see docs/VALIDATION.md, Section 2.1)")
+    parser.add_argument("--depth", choices=("none", "estimate"), default="none",
+                        help="estimate: show an estimated distance per object (yolo26n-depth, a guess from the picture, not LiDAR). Shown on screen as 'est.', never spoken until tape-tested")
+    parser.add_argument("--depth-scale", type=float, default=1.0,
+                        help="Correction factor for --depth estimate from src/depth_check.py --calibrate (default 1.0)")
     parser.add_argument("--person-check", action="store_true",
                         help="Experimental: confirm people with the pose model, so the camera holder's hands and arms "
                              "aren't announced as 'person' (a large central one becomes 'Possible obstacle'). Needs "
@@ -171,9 +176,11 @@ def main() -> None:
     detector = ObjectDetector(args.model, conf=args.conf, imgsz=args.imgsz, track=not args.no_track)
     person_check = PersonCheck(args.pose_model, imgsz=args.imgsz) if args.person_check else None
     obstacles = ObstacleScanner(args.obstacles) if args.obstacles else None
+    depth = YoloDepth(DEFAULT_DEPTH_MODEL, scale=args.depth_scale) if args.depth == "estimate" else None
     loading = [args.model]
     loading += [f"{args.pose_model} (person check)"] if person_check else []
     loading += [f"{obstacles.model_path} (floor scan)"] if obstacles else []
+    loading += [f"{DEFAULT_DEPTH_MODEL} (depth estimate)"] if depth else []
     log.info("Loading %s ...", " and ".join(loading))
     try:
         detector.warmup()
@@ -181,6 +188,8 @@ def main() -> None:
             person_check.warmup()
         if obstacles is not None:
             obstacles.warmup()
+        if depth is not None:
+            depth.warmup()
     except (ValueError, FileNotFoundError) as exc:
         raise SystemExit(str(exc)) from None
 
@@ -227,7 +236,7 @@ def main() -> None:
 
     pipeline = GuidePipeline(source, detector, sink, speaker=speaker, spatial=spatial, policy=policy,
                              controls=controls, label=args.label, open_source=open_source,
-                             person_check=person_check, obstacles=obstacles)
+                             person_check=person_check, depth=depth, obstacles=obstacles)
     try:
         pipeline.run()
     except KeyboardInterrupt:

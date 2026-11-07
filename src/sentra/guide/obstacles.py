@@ -283,6 +283,8 @@ class ObstacleScanner:
 
     def assess(self, frame: DetectionFrame, *, policy=None) -> Assessment:
         cfg = self.config
+        with self._lock:
+            generation = self._generation
         scan = self.latest()
         if scan is None:
             return Assessment("waiting for a scan" if self._latest is None else "scan too old")
@@ -292,7 +294,8 @@ class ObstacleScanner:
         qualifies = (scan.walkable_share >= cfg.min_walkable_share
                      and unexplained.sum() / corridor_cols >= cfg.min_blocked_share)
         with self._lock:
-            if self._latest is not scan:
+            # A newer scan does not invalidate this fresh snapshot, but a reset does.
+            if self._generation != generation:
                 return Assessment("waiting for a scan")
             if self._assessed is not scan:
                 self._recent.append(bool(qualifies))
