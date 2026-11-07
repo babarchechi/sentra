@@ -26,6 +26,7 @@ from sentra.capture import FrameSource, parse_source
 from sentra.guide.alerts import AlertConfig, AlertPolicy
 from sentra.guide.cameras import CameraCatalog, is_stream
 from sentra.guide.detector import DEFAULT_DETECT_MODEL, ObjectDetector
+from sentra.guide.obstacles import ENVIRONMENTS, ObstacleScanner
 from sentra.guide.person_check import DEFAULT_POSE_MODEL, PersonCheck
 from sentra.guide.pipeline import GuideControls, GuidePipeline
 from sentra.guide.spatial import SpatialEstimator
@@ -62,6 +63,11 @@ def build_parser() -> argparse.ArgumentParser:
                              f"{DEFAULT_POSE_MODEL}. Nearly free with tracking; with --no-track it runs more often")
     parser.add_argument("--pose-model", default=DEFAULT_POSE_MODEL,
                         help=f"Pose weights for --person-check (default {DEFAULT_POSE_MODEL})")
+    parser.add_argument("--obstacles", choices=sorted(ENVIRONMENTS), default=None,
+                        help="Experimental: also look for obstacles YOLO can't name (boxes, poles, bins) from where the "
+                             "floor stops, with a segmentation model (indoor: ADE20K, outdoor: Cityscapes). They are "
+                             "only ever called 'Possible obstacle ahead.'; the window shows the open-looking floor, "
+                             "marked unverified. Off by default")
     parser.add_argument("--all-labels", action="store_true",
                         help="Announce every class the model knows, not just the obstacle list")
     parser.add_argument("--repeat-after", type=float, default=10.0,
@@ -164,11 +170,17 @@ def main() -> None:
 
     detector = ObjectDetector(args.model, conf=args.conf, imgsz=args.imgsz, track=not args.no_track)
     person_check = PersonCheck(args.pose_model, imgsz=args.imgsz) if args.person_check else None
-    log.info("Loading %s%s ...", args.model, "" if person_check is None else f" and {args.pose_model} (person check)")
+    obstacles = ObstacleScanner(args.obstacles) if args.obstacles else None
+    loading = [args.model]
+    loading += [f"{args.pose_model} (person check)"] if person_check else []
+    loading += [f"{obstacles.model_path} (floor scan)"] if obstacles else []
+    log.info("Loading %s ...", " and ".join(loading))
     try:
         detector.warmup()
         if person_check is not None:
             person_check.warmup()
+        if obstacles is not None:
+            obstacles.warmup()
     except (ValueError, FileNotFoundError) as exc:
         raise SystemExit(str(exc)) from None
 
@@ -205,7 +217,8 @@ def main() -> None:
     if args.no_view:
         sink = HeadlessSink(args.max_seconds)
     else:
-        sink = GuideView(controls, policy, spatial.config, voice_name=args.voice, cameras=cameras)
+        sink = GuideView(controls, policy, spatial.config, voice_name=args.voice, cameras=cameras,
+                         obstacles=obstacles)
         if args.max_seconds is not None:
             log.warning("--max-seconds only applies with --no-view; press q to quit the window.")
         log.info("Click the video window, then: c cameras, r rotate, m mute, p privacy, q quit.")
@@ -214,7 +227,7 @@ def main() -> None:
 
     pipeline = GuidePipeline(source, detector, sink, speaker=speaker, spatial=spatial, policy=policy,
                              controls=controls, label=args.label, open_source=open_source,
-                             person_check=person_check)
+                             person_check=person_check, obstacles=obstacles)
     try:
         pipeline.run()
     except KeyboardInterrupt:
@@ -224,6 +237,8 @@ def main() -> None:
         source.close()
         if pipeline.source is not source:
             pipeline.source.close()  # the camera picked in the dropdown
+        if obstacles is not None:
+            obstacles.close()
         if speaker is not None:
             speaker.close()
             if speaker.failed:

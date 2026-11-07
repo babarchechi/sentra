@@ -37,6 +37,7 @@ from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
+from sentra.guide.obstacles import UNKNOWN_OBSTACLE
 from sentra.guide.person_check import UNCONFIRMED_PERSON
 from sentra.guide.schema import (
     SEVERITY_RANK,
@@ -50,7 +51,8 @@ from sentra.guide.schema import (
 # Labels that are never spoken by name, not even with --all-labels. When large and central they can still be a
 # "Possible obstacle ahead.". UNCONFIRMED_PERSON: a "person" box the pose model found no body in (a hand, an arm,
 # or a real person seen too close), see sentra.guide.person_check.
-OBSTACLE_ONLY_LABELS: frozenset[str] = frozenset({UNCONFIRMED_PERSON})
+# UNKNOWN_OBSTACLE: the floor stops close ahead and no recognised object explains it (sentra.guide.obstacles).
+OBSTACLE_ONLY_LABELS: frozenset[str] = frozenset({UNCONFIRMED_PERSON, UNKNOWN_OBSTACLE})
 
 # COCO classes worth mentioning for someone moving through a room or along a path. Small tabletop things
 # (cups, phones, keyboards, ...) are left out on purpose: they would make the guide chatty.
@@ -331,8 +333,13 @@ class AlertPolicy:
         track_id = members[0].detection.track_id if len(members) == 1 else None
         what = name
         if name == OBSTACLE:
-            unconfirmed = any(o.detection.label in OBSTACLE_ONLY_LABELS for o in members)
-            what = "person with no body seen (hand, arm or too close)" if unconfirmed else "uncertain detection"
+            labels = {o.detection.label for o in members}
+            if UNKNOWN_OBSTACLE in labels:
+                what = "floor blocked close ahead, no recognised object (floor scan)"
+            elif UNCONFIRMED_PERSON in labels:
+                what = "person with no body seen (hand, arm or too close)"
+            else:
+                what = "uncertain detection"
         if caution:
             reason = (
                 f"in the way: {what} (score {confidence:.2f}, {severity.value}) {region.value}, big in view "

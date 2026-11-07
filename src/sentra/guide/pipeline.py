@@ -34,6 +34,7 @@ from sentra.guide.cameras import CameraChoice, is_stream
 from sentra.guide.depth import DepthProvider, NoDepth
 from sentra.guide.detector import ObjectDetector
 from sentra.guide.event_log import DEFAULT_OUTPUT_DIR, GuideEventLog
+from sentra.guide.obstacles import ObstacleScanner
 from sentra.guide.person_check import PersonCheck
 from sentra.guide.schema import GuideSink, GuideUpdate
 from sentra.guide.spatial import SpatialEstimator
@@ -128,6 +129,8 @@ class RunStats:
     person_checks: int = 0         # pose-model runs by the person check
     person_check_ms: list[float] = field(default_factory=list)
     unconfirmed_people: int = 0    # "person" detections with no body seen (relabelled "unconfirmed person")
+    obstacle_frames: int = 0       # frames where the floor scan added an "unknown obstacle"
+    obstacle_scan_ms: list[float] = field(default_factory=list)
 
     @property
     def fps(self) -> float:
@@ -148,6 +151,10 @@ class RunStats:
             data["median_person_check_ms"] = (round(median(self.person_check_ms), 1)
                                               if self.person_check_ms else None)
             data["unconfirmed_people"] = self.unconfirmed_people
+        if self.obstacle_scan_ms:
+            data["obstacle_scans"] = len(self.obstacle_scan_ms)
+            data["median_obstacle_scan_ms"] = round(median(self.obstacle_scan_ms), 1)
+            data["obstacle_frames"] = self.obstacle_frames
         return data
 
     def summary(self) -> str:
@@ -163,6 +170,9 @@ class RunStats:
                      + (f" ({check:.0f} ms median)" if check is not None else "")
                      + f" and found no body in {d['unconfirmed_people']} 'person' boxes "
                        "(hands/arms or too close: never named, at most 'Possible obstacle')")
+        if "obstacle_scans" in d:
+            text += (f"; floor scan ran {d['obstacle_scans']} times ({d['median_obstacle_scan_ms']:.0f} ms median) and "
+                     f"flagged an unknown obstacle on {d['obstacle_frames']} frames")
         return text
 
 
@@ -183,10 +193,12 @@ class GuidePipeline:
         clock=time.perf_counter,
         open_source: Callable[[int | str], Any] | None = None,  # opens a camera for a switch; None = no switching
         person_check: PersonCheck | None = None,  # relabels "person" boxes with no body (hands/arms); None = off
+        obstacles: ObstacleScanner | None = None,  # floor-scan layer for unknown obstacles; None = off
     ) -> None:
         self.source = source
         self.detector = detector
         self.person_check = person_check
+        self.obstacles = obstacles
         self.sink = sink
         self.speaker = speaker
         self.spatial = spatial or SpatialEstimator()
@@ -212,6 +224,8 @@ class GuidePipeline:
         self.detector.load()
         if self.person_check is not None:
             self.person_check.load()
+        if self.obstacles is not None:
+            self.obstacles.load()
         event_log = GuideEventLog(self.output_dir, self.label)
         self.log_path = event_log.path
         log.info("Logging alerts (no images) to %s", event_log.path)
@@ -252,6 +266,10 @@ class GuidePipeline:
                         self.stats.person_checks += 1
                         self.stats.person_check_ms.append(self.person_check.check_ms[-1])
                     self.stats.unconfirmed_people += self.person_check.rejected - rejected
+                if self.obstacles is not None:  # scans in the background; adds an "unknown obstacle" if confirmed
+                    self.obstacles.submit(image, timestamp)
+                    frame = self.obstacles.augment(frame)
+                    self.stats.obstacle_frames += self.obstacles.last.obstacle is not None
                 depths = self.depth.estimate(image, frame)
                 objects = self.spatial.locate(frame, depths)
                 alerts = self.policy.update(objects, frame)
@@ -286,6 +304,8 @@ class GuidePipeline:
             self.stats.seconds = self._clock() - started
             event_log.write_summary(self.stats.as_dict())
             event_log.close()
+            if self.obstacles is not None:
+                self.stats.obstacle_scan_ms = list(self.obstacles.scan_ms)
             self._abandon_switch()
         return self.stats
 
@@ -378,6 +398,8 @@ class GuidePipeline:
         self.detector.reset_tracking()
         if self.person_check is not None:
             self.person_check.reset()
+        if self.obstacles is not None:
+            self.obstacles.reset()
         self.spatial.reset()
         self.policy.reset()
 
