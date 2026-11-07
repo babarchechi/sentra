@@ -11,15 +11,15 @@ from guide_helpers import FakeClock, FakeModel, FakeSource, RecordingSpeaker
 
 from sentra.guide.alerts import AlertConfig, AlertPolicy
 from sentra.guide.detector import ObjectDetector
-from sentra.guide.obstacles import (CANT_JUDGE, NONE_FOUND, OBSTRUCTION, UNKNOWN_OBSTACLE, ObstacleScanner,
+from sentra.guide.obstacles import (CANT_JUDGE, NONE_FOUND, OBSTRUCTION, UNKNOWN_OBSTACLE, WALL_OBSTACLE, ObstacleScanner,
                                     free_space)
 from sentra.guide.pipeline import GuideControls, GuidePipeline
 from sentra.guide.schema import Detection, DetectionFrame
 from sentra.guide.spatial import SpatialEstimator
 from sentra.guide.view import GuideView, HeadlessSink
 
-WALL, FLOOR, BOX, POLE, CHAIR = 0, 1, 2, 3, 4
-NAMES = {WALL: "wall", FLOOR: "floor", BOX: "box", POLE: "pole", CHAIR: "chair"}
+WALL, FLOOR, BOX, POLE, CHAIR, CEILING, UNKNOWN = 0, 1, 2, 3, 4, 5, 255
+NAMES = {WALL: "wall", FLOOR: "floor", BOX: "box", POLE: "pole", CHAIR: "chair", CEILING: "ceiling"}
 H, W = 48, 64  # class map size; the corridor is columns 22..40
 
 
@@ -55,7 +55,8 @@ def frame(*detections, t=0.0):
     return DetectionFrame(1, t, 640, 480, tuple(detections))
 
 
-IMAGE = np.zeros((480, 640, 3), np.uint8)
+# Textured input by default; featureless images have their own visibility tests.
+IMAGE = np.broadcast_to((np.arange(640) % 256).astype(np.uint8)[None, :, None], (480, 640, 3)).copy()
 
 
 def scan_twice(s, f=None):
@@ -101,8 +102,9 @@ def test_a_thin_pole_is_enough():
     assert [d.label for d in out.detections] == [UNKNOWN_OBSTACLE]
 
 
-def test_no_floor_in_view_means_cant_judge_not_an_obstacle():
-    s = scanner(np.full((H, W), WALL, np.uint8))  # e.g. the phone points at a wall or the ceiling
+@pytest.mark.parametrize("label", [CEILING, UNKNOWN])
+def test_no_floor_without_wall_evidence_means_cant_judge(label):
+    s = scanner(np.full((H, W), label, np.uint8))
     out = scan_twice(s)
     assert out.detections == () and s.last.status == CANT_JUDGE
 
@@ -235,7 +237,7 @@ def test_developer_view_draws_the_floor_scan(tmp_path):
 def test_confirmation_requires_two_qualifying_unexplained_scans(first):
     classes = room(pole=(30, 31, 20)) if first == "blip" else room(box=(26, 36, 30))
     if first == "no_floor":
-        classes[:] = WALL
+        classes[:] = CEILING
     s = scanner(classes)
     chair = Detection("chair", 56, 0.85, (260., 250., 360., 478.))
     s.submit(IMAGE, 0.0)

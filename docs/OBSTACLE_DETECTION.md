@@ -63,12 +63,20 @@ given (indoor = ADE20K, outdoor = Cityscapes).
 3. **Free-space scan:** in the central band (same edges as `SpatialConfig`, 35–65% of the width), for each column,
    start at the bottom row and move up until you hit a run of non-walkable pixels at least ~3% of the image height
    tall. That height (as a share of the image) is the column's free space.
-4. **Decision:**
+4. **Decision (updated for wall-filled views):**
+   - Wall class covers at least 85% of each half of a column, across at least 80% of central columns not explained
+     by announceable objects: confirm in 2 of the last 3 assessed scans, then feed a full-height central candidate
+     to the existing caution policy. This does not require visible floor. Say "Caution, possible obstacle ahead."
+     every two seconds while confirmed, fresh wall evidence persists. Wall coverage is not distance.
+   - Nearly uniform image (spatial standard deviation at most 5 on every 0–255 colour channel), with too little
+     floor evidence and no qualifying wall: independently confirm across scans and repeat "Caution, view unclear."
+     This can be a plain surface, covered lens or featureless ceiling. It is a visibility warning, not object recognition.
+   - The two conditions have separate confirmation histories from floor obstacles. Reusing a scan does not count
+     again; reset or a gap longer than the scan freshness limit clears history. New contrary evidence stops cues.
    - If walkable ground covers < ~15% of the scanned area: **can't judge**. Show it on screen, no cue, and never
-     "clear".
+     "clear", unless one of the wall/visibility rules above applies.
    - If ≥ ~10% of central columns have free space < ~30% of the height: **possible obstacle ahead**. Name it only if
-     the blocking pixels are a class we trust (for example "pole", "wall", "door", "stairs"). Otherwise say
-     "Possible obstacle ahead."
+     a separate object detector can name it under the active speech policy. Otherwise say "Possible obstacle ahead."
    - Otherwise, show "no near obstruction found (not proof the way is clear)" on screen only, and say nothing.
 5. **Feed it to `AlertPolicy`** as a candidate under the existing `("obstacle", CENTER)` key, so it gets the same
    persistence (3 of 5 checks), cooldown, and minimum gap. If YOLO already named a confident object whose box covers
