@@ -17,3 +17,8 @@ recordings/
 *.mkv
 .DS_Store
 .vscode/
+# depth and audio captures (Record3D, Depth Anything experiments)
+*.r3d
+*.npy
+*.npz
+*.wav

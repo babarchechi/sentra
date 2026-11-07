@@ -1,12 +1,16 @@
 """Camera input. Track B, owner: babarchechi. See docs/PHASE1_PLAN.md, Section 7.1 step 2.
 
-FrameSource reads frames on a background thread and keeps only the newest one, so slow pose
+FrameSource reads frames on a background thread and keeps only the newest one, so slow
 inference never works through a backlog of stale frames. Sources that stop delivering frames
 (for example a phone stream on flaky Wi-Fi) are reopened automatically.
+
+A path to a local video file also works (for repeatable tests on consented recordings): it plays at
+the file's own frame rate and ends at the last frame instead of reconnecting.
 """
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from urllib.parse import urlsplit
@@ -49,6 +53,8 @@ def describe_source(source: int | str) -> str:
     """
     if isinstance(source, int):
         return f"webcam {source}"
+    if os.path.isfile(source):
+        return os.path.basename(source)  # a local video file: no folder names (they can contain a username)
     if "://" not in source:
         return source
     parts = urlsplit(source)
@@ -108,7 +114,10 @@ class FrameSource:
       (1 s, 2 s, 4 s, then every 5 s) until close() is called.
     - The first open must succeed, otherwise the constructor raises RuntimeError.
     - `rotate` (0, 90, 180 or 270 degrees clockwise) turns frames upright, e.g. for a phone held in
-      portrait. This matters for fall detection: a sideways image makes a standing person look horizontal.
+      portrait. This matters for fall detection: a sideways image makes a standing person look horizontal,
+      and for Sentra Guide: left and right are only meaningful on an upright image.
+    - A local video file is paced at its own frame rate and is not reopened at the end: `ended` turns
+      True and read() returns (False, None, 0.0) from then on.
     """
 
     def __init__(
@@ -127,6 +136,7 @@ class FrameSource:
         self.rotate = rotate
         self._rotate_code = ROTATIONS[rotate]
         self.description = describe_source(source)
+        self.is_file = isinstance(source, str) and os.path.isfile(source)
         self._max_failed_reads = max_failed_reads
         self._backoff_start_s = backoff_start_s
         self._backoff_max_s = backoff_max_s
@@ -139,6 +149,7 @@ class FrameSource:
         self._last_read_seq = 0    # value of _seq at the last successful read()
         self._stop = threading.Event()
         self._opened = threading.Event()
+        self._ended = threading.Event()  # a video file reached its last frame
         self._open_failed = False
 
         # The capture is opened, read and released on the reader thread only.
@@ -164,6 +175,8 @@ class FrameSource:
                     return False, None, 0.0
                 if self._seq != self._last_read_seq:
                     break
+                if self._ended.is_set():
+                    return False, None, 0.0
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return False, None, 0.0
@@ -174,6 +187,11 @@ class FrameSource:
             # Outside the lock, and only for frames we hand out, so the reader thread never waits on it.
             frame = cv2.rotate(frame, self._rotate_code)
         return True, frame, timestamp
+
+    @property
+    def ended(self) -> bool:
+        """True once a video file has delivered its last frame (never True for cameras and streams)."""
+        return self._ended.is_set()
 
     def close(self) -> None:
         """Stop the reader thread and release the camera. Safe to call more than once."""
@@ -194,6 +212,8 @@ class FrameSource:
 
         failed_reads = 0
         backoff = self._backoff_start_s
+        frame_interval = self._file_frame_interval() if self.is_file else 0.0
+        next_due = time.perf_counter()
         try:
             while not self._stop.is_set():
                 capture = self._capture
@@ -201,7 +221,17 @@ class FrameSource:
                 if ok and frame is not None:
                     self._store(frame)
                     failed_reads, backoff = 0, self._backoff_start_s
+                    if frame_interval:  # play a file in real time, not as fast as it decodes
+                        next_due += frame_interval
+                        self._stop.wait(max(0.0, next_due - time.perf_counter()))
                     continue
+
+                if self.is_file:
+                    log.info("End of video file %s", self.description)
+                    self._ended.set()
+                    with self._new_frame:
+                        self._new_frame.notify_all()
+                    break
 
                 failed_reads += 1
                 if capture is not None and failed_reads < self._max_failed_reads:
@@ -219,6 +249,12 @@ class FrameSource:
                 failed_reads = 0
         finally:
             self._release()
+
+    def _file_frame_interval(self) -> float:
+        """Seconds between frames of the open video file (1/30 s if the file doesn't say)."""
+        get = getattr(self._capture, "get", None)
+        fps = float(get(cv2.CAP_PROP_FPS) or 0.0) if get is not None else 0.0
+        return 1.0 / fps if 1.0 <= fps <= 240.0 else 1.0 / 30.0
 
     def _store(self, frame: np.ndarray) -> None:
         # perf_counter, not monotonic: on Python 3.12 for Windows monotonic only ticks every ~15.6 ms.

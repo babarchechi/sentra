@@ -1,5 +1,8 @@
 # Sentra evaluation results
 
+> **Archived (2026-11-06):** fall-detection evaluation. Sentra Guide results go in [VALIDATION.md](VALIDATION.md).
+> The phone-stream notes below (DroidCam over the iPhone hotspot, eduroam, Auto-Lock) still apply.
+
 Owner: babarchechi. Protocol: docs/PHASE1_PLAN.md, Section 11. Consenting teammates only, mat for every drop,
 no video recorded (CSV event logs only).
 
