@@ -30,7 +30,7 @@ process with an OpenCV window.
 | Capability | Status | Evidence |
 | --- | --- | --- |
 | Laptop webcam → frames (`FrameSource`, newest frame only) | ✅ Verified | Phase 0/1 runs, and two Sentra Guide runs on 2026-11-06 at ~25 fps |
-| iPhone camera → laptop (DroidCam "PC Webcam" MJPEG over Personal Hotspot) | ✅ Verified with the **fall-detection** app (`src/main.py`), landscape and portrait (`--rotate 90`) on 2026-11-06 | docs/evaluation.md. Not yet run with `src/guide.py`, which uses the same `FrameSource`. |
+| iPhone camera → laptop (DroidCam "PC Webcam" MJPEG) | ✅ Verified with the fall app over the iPhone hotspot, and with **Sentra Guide over eduroam** (portrait, `--rotate 90`) on 2026-11-06 | docs/evaluation.md, VALIDATION.md: 24–29 fps, cues and directions confirmed by Babar |
 | Android camera → laptop (IP Webcam) | ⏳ Not verified | evaluation.md still says "pending" |
 | Windows camera API source (`windows:<name>`, Phone Link) | 🧪 Partly | `windows:HP 5MP` worked (iesa242); Phone Link only showed a spinner |
 | Automatic reconnect on a real phone stream | ⏳ Not verified | covered by fake-camera tests only |

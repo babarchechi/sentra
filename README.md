@@ -20,7 +20,7 @@ The project started as **Sentra**, a fall-detection prototype. That app still wo
 | Cooldown, persistence, priority, "possible obstacle", stale-frame rule, no invented distances | ✅ Unit-tested (41 new tests, 157 total) |
 | Debug window (regions, boxes, last cue, mute, privacy) and JSON-lines event log | ✅ |
 | Consented local video files as input (repeatable tests) | ✅ |
-| iPhone stream (DroidCam over hotspot) | ✅ Verified with the fall app; ⏳ not yet with Sentra Guide |
+| iPhone stream (DroidCam) | ✅ Verified with Sentra Guide 2026-11-06 (portrait + `--rotate 90`, campus Wi-Fi): cues and directions correct, 24–29 fps |
 | Android stream (IP Webcam) | ⏳ Not tested yet |
 | Speech on the phone (browser page) | ❌ Planned |
 | Depth: Depth Anything V2 (estimated) / Record3D iPhone LiDAR | ❌ Optional experiments, not started ([docs/DEPTH_OPTIONS.md](docs/DEPTH_OPTIONS.md)) |
@@ -38,7 +38,7 @@ python -m venv $HOME\.venvs\sentra
 python -m pip install -r requirements.txt
 python -m pytest -q
 python src/guide.py --source 0                                        # laptop webcam
-python src/guide.py --source "http://172.20.10.1:4747/video"          # iPhone + DroidCam on the iPhone hotspot
+python src/guide.py --source "http://<DroidCam WiFi IP>:4747/video" --rotate 90   # iPhone held upright
 ```
 
 `yolo26n.pt` (5.3 MB) downloads on the first run. Click the window, then **m** mute, **p** privacy, **q** quit.
