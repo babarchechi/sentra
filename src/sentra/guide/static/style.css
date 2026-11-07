@@ -79,6 +79,11 @@ button:focus-visible { outline: 4px solid var(--accent); outline-offset: 3px; }
 }
 .cue--fresh { border-color: var(--accent); }
 .cue--high { border-color: var(--bad); }
+/* A caution ("Caution, chair ahead."): white on dark red, ~13:1 contrast, so it stands out from ordinary cues */
+.cue--caution { border-color: var(--bad); background: #5c0000; }
+.cue--caution .cue__text { color: var(--fg); }
+
+.note { color: var(--muted); font-size: 0.95rem; }
 .cue__text {
   margin: 0;
   font-size: clamp(2rem, 11vw, 3.5rem);

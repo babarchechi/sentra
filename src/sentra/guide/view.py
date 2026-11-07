@@ -35,6 +35,8 @@ NOTICE_S = 6.0           # how long a status message stays in the toolbar
 RED, ORANGE, GREEN, GREY = (40, 40, 230), (0, 150, 255), (60, 190, 60), (150, 150, 150)
 WHITE, BLACK, YELLOW = (255, 255, 255), (0, 0, 0), (0, 220, 255)
 DARK, HOVER, ACCENT, TOOLBAR_BG = (45, 45, 45), (85, 85, 85), (60, 140, 60), (25, 25, 25)
+CAUTION_RED = (40, 40, 255)  # BGR
+CAUTION_FLASH_S = 1.5        # how long the video keeps a red frame after "Caution, ..."
 SEVERITY_COLORS = {Severity.HIGH: RED, Severity.MEDIUM: ORANGE, Severity.LOW: GREEN}
 
 MENU_X, MENU_PAD, ROW_H, MENU_FONT = 6, 8, 24, 0.5
@@ -285,11 +287,18 @@ class GuideView:
         canvas[top:top + vh, :vw] = video
         self._draw_top_bar(canvas, update)
         self._draw_bottom_bar(canvas, top + vh)
+        if self.caution_showing():
+            cv2.rectangle(canvas, (0, top), (vw - 1, top + vh - 1), CAUTION_RED, 6)  # red frame around the video
         self._last_base = canvas.copy()
         self._draw_toolbar(canvas)
         if self.menu is not None:
             self.menu.draw(canvas)
         return canvas
+
+    def caution_showing(self) -> bool:
+        """True for CAUTION_FLASH_S after a caution: the video gets a red frame."""
+        return (self._last_alert is not None and self._last_alert.caution
+                and time.perf_counter() - self._last_alert_at < CAUTION_FLASH_S)
 
     def _draw_toolbar(self, canvas: np.ndarray) -> None:
         """Camera dropdown button (drawn by the menu) and a status message to its right."""
@@ -342,13 +351,16 @@ class GuideView:
 
     def _draw_bottom_bar(self, canvas: np.ndarray, top: int) -> None:
         cv2.rectangle(canvas, (0, top), (canvas.shape[1], top + BAR), (40, 40, 40), -1)
+        color = YELLOW
         if self._last_alert is not None:
             ago = time.perf_counter() - self._last_alert_at
             muted = " (muted)" if self.controls.muted else ""
             text = f'Last: "{self._last_alert.text}"{muted} {ago:.0f} s ago'
+            if self._last_alert.caution:
+                color = CAUTION_RED
         else:
             text = "Nothing announced yet"
-        _put(canvas, text, (10, top + BAR - 10), 0.5, YELLOW, 1)
+        _put(canvas, text, (10, top + BAR - 10), 0.5, color, 1)
         note = "Experimental. Not a navigation aid."
         size = cv2.getTextSize(note, FONT, 0.45, 1)[0]
         _put(canvas, note, (canvas.shape[1] - size[0] - 10, top + BAR - 10), 0.45, GREY, 1)

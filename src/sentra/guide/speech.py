@@ -158,10 +158,20 @@ class Speaker:
         self._thread = threading.Thread(target=self._run, name="Speaker", daemon=True)
         self._thread.start()
 
-    def say(self, text: str, created: float | None = None) -> None:
-        """Queue `text`. `created` is the perf_counter time the message became true (default: now)."""
+    def say(self, text: str, created: float | None = None, urgent: bool = False) -> None:
+        """Queue `text`. `created` is the perf_counter time the message became true (default: now).
+
+        `urgent` (a caution) drops everything still waiting, so it's the next thing said.
+        """
         item = (text, time.perf_counter() if created is None else created)
         with self._lock:
+            if urgent:
+                while True:
+                    try:
+                        self._queue.get_nowait()
+                        self.dropped += 1
+                    except queue.Empty:
+                        break
             while True:
                 try:
                     self._queue.put_nowait(item)

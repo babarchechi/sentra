@@ -68,6 +68,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Seconds before the same object and direction is said again (default 10)")
     parser.add_argument("--min-gap", type=float, default=2.5,
                         help="Minimum seconds between any two announcements (default 2.5)")
+    parser.add_argument("--no-caution", action="store_true",
+                        help="Don't give danger warnings. By default something big in the middle of the view gets "
+                             "'Caution, chair ahead.' (said first, repeated every --caution-every s while it stays, "
+                             "and the phone page vibrates). There is never a 'safe' signal")
+    parser.add_argument("--caution-every", type=float, default=5.0,
+                        help="Seconds between repeats of a caution while the thing stays in the way (default 5)")
     parser.add_argument("--voice", choices=("windows", "print", "off"), default="windows",
                         help="windows: laptop's built-in voice; print: console only; off: no speech")
     parser.add_argument("--muted", action="store_true", help="Start muted (press m in the window to unmute)")
@@ -91,6 +97,8 @@ def build_policy(args: argparse.Namespace) -> AlertPolicy:
         uncertain_confidence=min(0.3, args.announce_conf),
         repeat_after_s=args.repeat_after,
         min_gap_s=args.min_gap,
+        caution=not args.no_caution,
+        caution_repeat_after_s=args.caution_every,
         **({"labels": None} if args.all_labels else {}),
     )
     return AlertPolicy(config)

@@ -73,7 +73,7 @@ def test_moving_chair_from_centre_to_side_is_announced_again_with_the_new_direct
 
 
 def test_minimum_gap_between_any_two_announcements_and_priority_order():
-    scene = Scene(AlertConfig(min_gap_s=2.5))
+    scene = Scene(AlertConfig(min_gap_s=2.5, caution=False))  # cautions are tested in test_guide_caution.py
     objects = (det("person", cx=0.85), det("chair", cx=0.5, height=0.6), det("dog", cx=0.1))
     scene.run(8, *objects)
     times = [t - 100.0 for t, _ in scene.said]
@@ -110,7 +110,7 @@ def test_all_labels_mode_announces_any_class():
 
 
 def test_uncertain_large_central_detection_is_a_possible_obstacle_without_its_label():
-    scene = Scene()
+    scene = Scene(AlertConfig(caution=False))  # this big couch is in the way: with cautions it's "Caution, ..."
     scene.run(1, det("couch", cx=0.5, height=0.5, conf=0.4))
     (alert,) = [a for _, a in scene.said]
     assert alert.text == "Possible obstacle ahead."

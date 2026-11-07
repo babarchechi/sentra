@@ -261,7 +261,10 @@ class GuidePipeline:
                 for alert in alerts:
                     spoken = self.speaker is not None and not self.controls.muted
                     if spoken:
-                        self.speaker.say(alert.text, created=timestamp)
+                        if alert.caution:  # a danger warning goes before anything still waiting
+                            self.speaker.say(alert.text, created=timestamp, urgent=True)
+                        else:
+                            self.speaker.say(alert.text, created=timestamp)
                     event_log.write_alert(alert, spoken=spoken)
 
                 self.stats.frames += 1

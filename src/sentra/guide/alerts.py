@@ -13,6 +13,18 @@ Rules (all tunable in AlertConfig):
 - Frames that were already older than `max_frame_age_s` when processed never trigger speech.
 - A distance is spoken only if it comes from a validated depth source (DepthEstimate.speakable).
 - The words "clear" and "safe" are never produced: missing detections do not mean a free path.
+
+Caution cues (danger warnings), on unless `caution=False`:
+- Something in the way is a group with a HIGH-severity member: in the central band and at least
+  SpatialConfig.high_view_height of the frame tall, so big or near (box size is not a distance).
+- It must be HIGH in `persist_frames` of the last `persist_window` frames too. Then it is said as
+  "Caution, chair ahead." (or "Caution, possible obstacle ahead."), ahead of any other cue.
+- A caution may follow any earlier cue after `caution_min_gap_s` (shorter than `min_gap_s`) and repeats every
+  `caution_repeat_after_s` while the thing stays in the way. Something already announced normally that comes close
+  gets its caution straight away.
+- A caution has GuideAlert.caution=True: the laptop voice says it before anything waiting, the phone page vibrates
+  and interrupts other speech, and the debug view shows it in red. There is no "safe" counterpart: no caution never
+  means nothing is in the way.
 """
 from __future__ import annotations
 
@@ -27,6 +39,7 @@ from sentra.guide.schema import (
     DetectionFrame,
     GuideAlert,
     Region,
+    Severity,
     SpatialObject,
 )
 
@@ -71,6 +84,9 @@ class AlertConfig:
     min_gap_s: float = 2.5
     max_frame_age_s: float = 1.0
     labels: frozenset[str] | None = field(default=DEFAULT_ANNOUNCE_LABELS)  # None = every class
+    caution: bool = True                    # warn "Caution, ... ahead." about big things in the way
+    caution_repeat_after_s: float = 5.0     # repeat a caution this often while the thing stays in the way
+    caution_min_gap_s: float = 1.0          # a caution may follow any earlier cue after this long
 
     def __post_init__(self) -> None:
         if not 1 <= self.persist_frames <= self.persist_window:
@@ -91,15 +107,18 @@ def plural(name: str) -> str:
     return name + "s"
 
 
-def alert_text(name: str, count: int, region: Region, meters: float | None = None) -> str:
-    """E.g. "Chair ahead.", "2 people to your right.", "Chair ahead, approximately 1.4 meters."."""
+def alert_text(name: str, count: int, region: Region, meters: float | None = None, *, caution: bool = False) -> str:
+    """E.g. "Chair ahead.", "2 people to your right.", "Chair ahead, approximately 1.4 meters.",
+    and with `caution`: "Caution, chair ahead.", "Caution, possible obstacle ahead."."""
     if name == OBSTACLE:
-        subject = "Possible obstacle"
+        subject = "possible obstacle"
     else:
         subject = f"{count} {plural(name)}" if count > 1 else name
     text = f"{subject} {PLACE_WORDS[region]}"
     if meters is not None:
         text += f", approximately {meters:.1f} meters"
+    if caution:
+        return f"Caution, {text}."
     return text[0].upper() + text[1:] + "."
 
 
@@ -117,7 +136,9 @@ class AlertPolicy:
         self.config = config or AlertConfig()
         self._clock = clock
         self._history: deque[set[GroupKey]] = deque(maxlen=self.config.persist_window)
+        self._in_the_way: deque[set[GroupKey]] = deque(maxlen=self.config.persist_window)  # HIGH groups per frame
         self._last_said: dict[GroupKey, float] = {}
+        self._last_caution: dict[GroupKey, float] = {}
         self._last_any = float("-inf")
 
     def is_confident(self, obj: SpatialObject) -> bool:
@@ -157,17 +178,36 @@ class AlertPolicy:
         cfg = self.config
         now_frame = frame.timestamp
         groups = self.group(objects)
+        in_the_way = {key for key, members in groups.items()
+                      if cfg.caution and any(o.severity is Severity.HIGH for o in members)}
         self._history.append(set(groups))
+        self._in_the_way.append(in_the_way)
 
         age_s = self._clock() - frame.timestamp
         if age_s > cfg.max_frame_age_s:
             return ()
-        if now_frame - self._last_any < cfg.min_gap_s:
-            return ()
+        since_last = now_frame - self._last_any
 
+        # 1. Cautions first: something big in the middle of the view, for several frames.
+        cautions = [
+            key for key in in_the_way
+            if self._in_the_way_count(key) >= cfg.persist_frames
+            and now_frame - self._last_caution.get(key, float("-inf")) >= cfg.caution_repeat_after_s
+        ]
+        if cautions and since_last >= min(cfg.caution_min_gap_s, cfg.min_gap_s):
+            best = max(cautions, key=lambda key: self._priority(key, groups[key]))
+            alert = self._make_alert(best, groups[best], frame, age_s, caution=True)
+            self._last_caution[best] = self._last_said[best] = self._last_any = now_frame
+            return (alert,)
+
+        # 2. Ordinary cues. Things in the way are left to the caution above (no "Chair ahead." just before
+        #    "Caution, chair ahead.", and no plain repeat while its caution is cooling down).
+        if since_last < cfg.min_gap_s:
+            return ()
         candidates = [
             key for key in groups
-            if self._seen_count(key) >= cfg.persist_frames
+            if key not in in_the_way
+            and self._seen_count(key) >= cfg.persist_frames
             and now_frame - self._last_said.get(key, float("-inf")) >= cfg.repeat_after_s
         ]
         if not candidates:
@@ -181,11 +221,16 @@ class AlertPolicy:
     def reset(self) -> None:
         """Forget recent frames and cooldowns, e.g. after switching cameras: the new view starts fresh."""
         self._history.clear()
+        self._in_the_way.clear()
         self._last_said.clear()
+        self._last_caution.clear()
         self._last_any = float("-inf")
 
     def _seen_count(self, key: GroupKey) -> int:
         return sum(key in keys for keys in self._history)
+
+    def _in_the_way_count(self, key: GroupKey) -> int:
+        return sum(key in keys for keys in self._in_the_way)
 
     @staticmethod
     def _priority(key: GroupKey, members: list[SpatialObject]):
@@ -198,7 +243,8 @@ class AlertPolicy:
         )
 
     def _make_alert(
-        self, key: GroupKey, members: list[SpatialObject], frame: DetectionFrame, age_s: float
+        self, key: GroupKey, members: list[SpatialObject], frame: DetectionFrame, age_s: float, *,
+        caution: bool = False,
     ) -> GuideAlert:
         name, region = key
         count = 1 if name == OBSTACLE else len(members)
@@ -212,11 +258,18 @@ class AlertPolicy:
         if name == OBSTACLE:
             unconfirmed = any(o.detection.label in OBSTACLE_ONLY_LABELS for o in members)
             what = "person with no body seen (hand, arm or too close)" if unconfirmed else "uncertain detection"
-        reason = (
-            f"{what} (score {confidence:.2f}, {severity.value}) {region.value} "
-            f"in {self._seen_count(key)}/{len(self._history)} recent frames; "
-            f"not said in the last {self.config.repeat_after_s:.0f} s"
-        )
+        if caution:
+            reason = (
+                f"in the way: {what} (score {confidence:.2f}, {severity.value}) {region.value}, big in view "
+                f"in {self._in_the_way_count(key)}/{len(self._in_the_way)} recent frames; "
+                f"no caution for it in the last {self.config.caution_repeat_after_s:.0f} s"
+            )
+        else:
+            reason = (
+                f"{what} (score {confidence:.2f}, {severity.value}) {region.value} "
+                f"in {self._seen_count(key)}/{len(self._history)} recent frames; "
+                f"not said in the last {self.config.repeat_after_s:.0f} s"
+            )
         if any(o.depth.meters is not None and not o.depth.validated for o in members):
             reason += "; unvalidated distance not spoken"
         return GuideAlert(
@@ -227,7 +280,7 @@ class AlertPolicy:
             region=region,
             severity=severity,
             confidence=round(confidence, 3),
-            text=alert_text(name, count, region, meters),
+            text=alert_text(name, count, region, meters, caution=caution),
             reason=reason,
             track_id=track_id,
             meters=meters,
@@ -235,4 +288,5 @@ class AlertPolicy:
             depth_confidence=round(nearest.confidence, 2) if nearest else 0.0,
             latency_ms=round(age_s * 1000.0, 1),
             source=frame.source,
+            caution=caution,
         )
