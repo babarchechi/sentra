@@ -57,12 +57,53 @@ def test_one_frame_flicker_is_never_spoken():
     assert scene.said == []
 
 
-def test_same_object_and_direction_is_repeated_only_after_cooldown():
-    scene = Scene(AlertConfig(repeat_after_s=10.0))
-    scene.run(25, det())
-    times = [t - 100.0 for t, _ in scene.said]
-    assert scene.texts() == ["Chair ahead."] * 3
-    assert times == [0.25, 10.25, 20.25]
+def test_something_that_stays_in_view_is_not_repeated_until_the_central_reminder():
+    scene = Scene(AlertConfig(repeat_after_s=10.0, remind_after_s=30.0))
+    scene.run(25, det(cx=0.5), det("person", cx=0.9))   # chair ahead, person to the right, both stay
+    assert sorted(scene.texts()) == ["Chair ahead.", "Person to your right."]  # once each in 25 s
+    scene.run(15, det(cx=0.5), det("person", cx=0.9))
+    reminders = [(t - 100.0, a) for t, a in scene.said[2:]]
+    # only the central chair gets a reminder, 30 s after it was first said; the side person never repeats
+    assert [a.text for _, a in reminders] == ["Chair ahead."]
+    assert reminders[0][0] == 30.25 and "reminder" in reminders[0][1].reason
+
+
+def test_no_reminders_when_turned_off():
+    scene = Scene(AlertConfig(remind_after_s=None))
+    scene.run(70, det())
+    assert scene.texts() == ["Chair ahead."]
+
+
+def test_said_again_when_it_comes_back_after_being_out_of_view():
+    scene = Scene(AlertConfig(repeat_after_s=10.0, forget_after_s=3.0, remind_after_s=None))
+    scene.run(5, det())
+    scene.run(1, )                 # gone for 1 s: a flicker, not "gone"
+    scene.run(5, det())
+    assert scene.texts() == ["Chair ahead."]
+    scene.run(4, )                 # gone for 4 s
+    scene.run(2, det())
+    assert scene.texts() == ["Chair ahead.", "Chair ahead."]
+    assert "back in view" in scene.said[-1][1].reason
+
+
+def test_said_again_when_more_of_them_appear_but_not_when_fewer():
+    scene = Scene(AlertConfig(repeat_after_s=10.0, remind_after_s=None))
+    scene.run(11, det("chair", cx=0.1))
+    scene.run(2, det("chair", cx=0.1), det("chair", cx=0.2))
+    assert scene.texts() == ["Chair to your left.", "2 chairs to your left."]
+    assert "more of them (1 -> 2)" in scene.said[-1][1].reason
+    scene.run(12, det("chair", cx=0.1))
+    assert len(scene.said) == 2
+
+
+def test_never_repeats_sooner_than_the_floor_even_if_it_flickers_away():
+    scene = Scene(AlertConfig(repeat_after_s=10.0, forget_after_s=3.0))
+    scene.run(1, det())
+    scene.run(4, )
+    scene.run(2, det())            # back after 4 s, but only 7 s since it was said
+    assert scene.texts() == ["Chair ahead."]
+    scene.run(4, det())            # 11 s since: now the "back in view" rule allows it
+    assert scene.texts() == ["Chair ahead.", "Chair ahead."]
 
 
 def test_moving_chair_from_centre_to_side_is_announced_again_with_the_new_direction():

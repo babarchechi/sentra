@@ -120,3 +120,71 @@ def test_view_renders_regions_boxes_and_privacy_and_handles_keys(tmp_path):
     assert not view.should_stop()
     view.handle_key(ord("q"))
     assert view.should_stop()
+
+
+# Dashboard panel ---------------------------------------------------------------------------------------
+
+def _dashboard_update(*objects_spec, alerts=()):
+    """A 480x640 GuideUpdate with SpatialObjects built through the real SpatialEstimator."""
+    import numpy as np
+
+    from sentra.guide.schema import Detection, DetectionFrame, GuideUpdate
+    from sentra.guide.spatial import SpatialEstimator
+
+    dets = tuple(Detection(label, 0, conf, (cx * 640 - 40, 480 - h * 480, cx * 640 + 40, 480.0))
+                 for label, cx, h, conf in objects_spec)
+    frame = DetectionFrame(1, 0.0, 640, 480, dets, source="test")
+    image = np.full((480, 640, 3), 90, np.uint8)
+    return GuideUpdate(frame, SpatialEstimator().locate(frame), tuple(alerts), image, 25.0, 30.0, "Distance: off")
+
+
+def test_not_announced_reasons_match_the_alert_rules():
+    from sentra.guide.view import not_announced_reason, path_position
+
+    policy = AlertPolicy()
+    chair, cup, tiny, unsure, low_side = _dashboard_update(
+        ("chair", 0.5, 0.6, 0.9), ("cup", 0.1, 0.4, 0.9), ("person", 0.9, 0.05, 0.9),
+        ("couch", 0.5, 0.5, 0.4), ("person", 0.85, 0.4, 0.3)).objects
+    assert not_announced_reason(policy, chair) == ""
+    assert not_announced_reason(policy, cup) == "not on alert list"
+    assert not_announced_reason(policy, tiny) == "small / far away"
+    assert "possible obstacle" in not_announced_reason(policy, unsure)
+    assert not_announced_reason(policy, low_side) == "score under 50%"
+    assert path_position(chair) == "ahead, large in view"
+
+
+def test_dashboard_puts_video_left_and_panel_right_and_lists_cues():
+    from sentra.guide.schema import GuideAlert, Region, Severity
+    from sentra.guide.view import BAR, PANEL_BG, PANEL_W
+
+    controls = GuideControls()
+    view = GuideView(controls, AlertPolicy(), show_window=False)
+    alert = GuideAlert(0.0, 1, "chair", 1, Region.CENTER, Severity.HIGH, 0.9, "Chair ahead.", "test")
+    update = _dashboard_update(("chair", 0.5, 0.6, 0.9), ("person", 0.9, 0.4, 0.8), alerts=(alert,))
+    view.publish(update)  # show_window=False: records the cue without opening a window
+    canvas = view.render(update)
+    assert canvas.shape == (480 + 2 * BAR, 640 + PANEL_W, 3)
+    assert canvas[BAR + 300, 20].tolist() != PANEL_BG and canvas[BAR + 300, 640 + PANEL_W - 5].tolist() == list(PANEL_BG)
+    assert len(view._recent) == 1 and view._recent[0][1] == "Chair ahead."
+
+    # privacy hides only the camera image; the panel (text, no pixels from the camera) stays
+    controls.privacy = True
+    hidden = view.render(update)
+    assert hidden[BAR + 300, 20].tolist() == [0, 0, 0]
+    assert (hidden[BAR:, 640:] == canvas[BAR:, 640:]).mean() > 0.95
+
+
+def test_dashboard_never_says_clear_or_safe(monkeypatch):
+    import sentra.guide.view as view_module
+
+    written = []
+    real_put = view_module._put
+    monkeypatch.setattr(view_module, "_put", lambda img, text, *a, **k: (written.append(text), real_put(img, text, *a, **k)))
+    view = GuideView(GuideControls(), AlertPolicy(), show_window=False)
+    view.render(_dashboard_update())                         # nothing detected
+    view.render(_dashboard_update(("cup", 0.1, 0.4, 0.9)))   # something irrelevant to the side
+    view.render_idle()
+    text = " ".join(written).lower()
+    assert "nothing detected" in text and "not proof the way is clear" in text
+    assert "is clear" not in text.replace("not proof the way is clear", "") and "safe" not in text
+
