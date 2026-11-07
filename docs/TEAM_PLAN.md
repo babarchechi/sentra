@@ -119,6 +119,12 @@ present camera-only plus the honest blocker.
    `requirements-depth.txt` (not the main file), so camera-only installs stay small.
    *Accept:* measured ms/frame on this laptop, plus a measured error table at 1/2/3 m before anyone talks about meters.
 
+**Next (added 2026-11-07)**
+4b. **P1** Object-independent obstacle layer: `src/sentra/guide/obstacles.py`, behind `--obstacles indoor|outdoor`,
+   off by default. Plan, measured speeds, and test protocol: [OBSTACLE_DETECTION.md](OBSTACLE_DETECTION.md).
+   *Accept:* runs on a background thread without slowing YOLO; open floor stays quiet; tests in its Section 4 recorded
+   in VALIDATION.md. Decide by Saturday evening whether it's spoken in the demo or shown on screen only.
+
 **Stretch**
 5. **P2** Motion cues in a **fixed-camera** scene only (for example "Person crossing ahead") from tracked box movement.
    No approach/collision claims on a handheld phone.
@@ -148,6 +154,10 @@ present camera-only plus the honest blocker.
 4. **P1** User feedback: reach out (campus disability services, accessibility clubs, O&M instructors) and ask for
    feedback on a **seated tabletop or recorded demo**, not walking. Use the interview template in VALIDATION.md,
    Section 6. Write down what people actually said, including "this wouldn't help me".
+
+**Next (added 2026-11-07)**
+4b. **P1** Wording and rate limits for the obstacle layer (OBSTACLE_DETECTION.md, Section 3, step 5): no double cue
+   when YOLO already named the object, and "can't judge" shown on screen, never spoken as "clear".
 
 **Stretch**
 5. **P2** Earcons (a short tone per direction), haptics on Android (`navigator.vibrate`), a user-adjustable "quiet"

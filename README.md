@@ -79,6 +79,7 @@ Details and the event schema: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | [docs/SETUP_WINDOWS.md](docs/SETUP_WINDOWS.md) | Tested setup and run commands, iPhone/Android steps, troubleshooting |
 | [docs/DEPTH_OPTIONS.md](docs/DEPTH_OPTIONS.md) | Camera-only vs. Depth Anything V2 vs. Record3D, with a decision rule |
 | [docs/VALIDATION.md](docs/VALIDATION.md) | Metrics, measured results so far, test scenes, user-feedback log |
+| [docs/OBSTACLE_DETECTION.md](docs/OBSTACLE_DETECTION.md) | Warning about things YOLO can't name: feasibility results, build plan, test protocol |
 | [docs/SAFETY_AND_PRIVACY.md](docs/SAFETY_AND_PRIVACY.md) | Claims we make and don't make, testing rules, privacy |
 | [docs/PHASE1_PLAN.md](docs/PHASE1_PLAN.md), [docs/evaluation.md](docs/evaluation.md) | Archived fall-detection plan and results |
 

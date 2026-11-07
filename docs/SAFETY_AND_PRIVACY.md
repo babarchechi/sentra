@@ -16,7 +16,9 @@ Use this wording in the pitch, the UI and the README. Don't present user interes
 ## Testing safely
 
 - Consenting teammates only. Seated, standing, or walking slowly across a **fixed** camera in a cleared indoor space.
-- No blindfolded testers, no one walking guided by the app, no outdoor or street tests.
+- No blindfolded testers, no one walking guided by the app.
+- Outdoors: controlled engineering tests only (docs/OBSTACLE_DETECTION.md, Section 4). Sighted teammates who aren't
+  relying on the app, camera held still or moved slowly, on a campus walkway away from vehicles. No streets.
 - Feedback sessions with blind or low-vision people or professionals use a **tabletop or recorded demo**, not walking.
 
 ## Privacy
