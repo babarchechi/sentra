@@ -138,7 +138,9 @@ class ObstacleScanner:
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._stop = threading.Event()
-        self._pending: tuple[np.ndarray, float] | None = None
+        self._pending: tuple[np.ndarray, float, int] | None = None
+        self._generation = 0
+        self._assessed: ScanResult | None = None
         self._latest: ScanResult | None = None
         self._recent: deque[bool] = deque(maxlen=self.config.confirm_window)  # obstruction found, per scan
         self._thread: threading.Thread | None = None
@@ -178,6 +180,8 @@ class ObstacleScanner:
     def reset(self) -> None:
         """Forget scans, e.g. after switching cameras or rotating."""
         with self._lock:
+            self._generation += 1
+            self._assessed = None
             self._pending, self._latest = None, None
             self._recent.clear()
             self.last = Assessment("starting...")
@@ -187,11 +191,13 @@ class ObstacleScanner:
     def submit(self, image: np.ndarray, timestamp: float) -> None:
         """Offer the newest frame. In the background, frames that arrive while a scan runs replace each other."""
         self.load()
+        with self._lock:
+            generation = self._generation
         if not self.background:
-            self._store(self.scan(image, timestamp))
+            self._store(self.scan(image, timestamp), generation)
             return
         with self._lock:
-            self._pending = (image, timestamp)
+            self._pending = (image, timestamp, generation)
         self._wake.set()
 
     def _run(self) -> None:
@@ -204,15 +210,17 @@ class ObstacleScanner:
                 continue
             started = time.perf_counter()
             try:
-                self._store(self.scan(*job))
+                image, timestamp, generation = job
+                self._store(self.scan(image, timestamp), generation)
             except Exception as exc:  # a broken scan must never take the app down
                 log.warning("Obstacle scan failed: %s", exc)
             self._stop.wait(max(0.0, self.config.min_interval_s - (time.perf_counter() - started)))
 
-    def _store(self, result: ScanResult) -> None:
+    def _store(self, result: ScanResult, generation: int) -> None:
         with self._lock:
+            if generation != self._generation:
+                return
             self._latest = result
-            self._recent.append(bool(result.blocked.any()))
         self.scan_ms.append(result.scan_ms)
 
     def latest(self) -> ScanResult | None:
@@ -266,26 +274,33 @@ class ObstacleScanner:
 
     # Using a scan ---------------------------------------------------------------------------------------------
 
-    def augment(self, frame: DetectionFrame) -> DetectionFrame:
+    def augment(self, frame: DetectionFrame, *, policy=None) -> DetectionFrame:
         """Add an "unknown obstacle" detection to `frame` if the newest scan shows an unexplained obstruction."""
-        self.last = self.assess(frame)
+        self.last = self.assess(frame, policy=policy)
         if self.last.obstacle is None:
             return frame
         return replace(frame, detections=frame.detections + (self.last.obstacle,))
 
-    def assess(self, frame: DetectionFrame) -> Assessment:
+    def assess(self, frame: DetectionFrame, *, policy=None) -> Assessment:
         cfg = self.config
         scan = self.latest()
         if scan is None:
             return Assessment("waiting for a scan" if self._latest is None else "scan too old")
-        if scan.walkable_share < cfg.min_walkable_share:
-            return Assessment(CANT_JUDGE)
-        unexplained = scan.blocked & ~self._explained(scan, frame)
+        unexplained = scan.blocked & ~self._explained(scan, frame, policy=policy)
         a, b = int(cfg.left_edge * scan.width), int(cfg.right_edge * scan.width)
         corridor_cols = max(b - a, 1)
+        qualifies = (scan.walkable_share >= cfg.min_walkable_share
+                     and unexplained.sum() / corridor_cols >= cfg.min_blocked_share)
         with self._lock:
+            if self._latest is not scan:
+                return Assessment("waiting for a scan")
+            if self._assessed is not scan:
+                self._recent.append(bool(qualifies))
+                self._assessed = scan
             confirmed = sum(self._recent) >= cfg.confirm_scans
-        if unexplained.sum() / corridor_cols < cfg.min_blocked_share or not confirmed:
+        if scan.walkable_share < cfg.min_walkable_share:
+            return Assessment(CANT_JUDGE)
+        if not qualifies or not confirmed:
             return Assessment(NONE_FOUND, unexplained=unexplained)
         x1, x2 = _longest_run(unexplained)
         nearest_free = float(scan.free[x1:x2].min())
@@ -299,12 +314,19 @@ class ObstacleScanner:
         obstacle = Detection(UNKNOWN_OBSTACLE, -1, confidence, box, None)
         return Assessment(f"{OBSTRUCTION} ({scan.blocker or 'unlabelled'})", obstacle, unexplained)
 
-    def _explained(self, scan: ScanResult, frame: DetectionFrame) -> np.ndarray:
+    def _explained(self, scan: ScanResult, frame: DetectionFrame, *, policy=None) -> np.ndarray:
         """Columns where a confident YOLO box stands where the floor stops: YOLO will name that thing itself."""
         explained = np.zeros(scan.width, bool)
+        # Import here to avoid the alerts -> obstacles module cycle. Use the active
+        # policy so custom label/confidence/path settings also govern suppression.
+        from sentra.guide.alerts import AlertPolicy
+        from sentra.guide.spatial import SpatialEstimator
+
+        policy = policy if policy is not None else AlertPolicy()
         sx = scan.width / max(frame.frame_width, 1)
-        for det in frame.detections:
-            if det.label == UNKNOWN_OBSTACLE or det.confidence < self.config.explain_conf:
+        for obj in SpatialEstimator().locate(frame):
+            det = obj.detection
+            if not policy.is_confident(obj) or det.confidence < self.config.explain_conf:
                 continue
             x1, y1, x2, y2 = det.box
             c1, c2 = max(0, int(x1 * sx)), min(scan.width, int(np.ceil(x2 * sx)))

@@ -268,7 +268,7 @@ class GuidePipeline:
                     self.stats.unconfirmed_people += self.person_check.rejected - rejected
                 if self.obstacles is not None:  # scans in the background; adds an "unknown obstacle" if confirmed
                     self.obstacles.submit(image, timestamp)
-                    frame = self.obstacles.augment(frame)
+                    frame = self.obstacles.augment(frame, policy=self.policy)
                     self.stats.obstacle_frames += self.obstacles.last.obstacle is not None
                 depths = self.depth.estimate(image, frame)
                 objects = self.spatial.locate(frame, depths)
@@ -302,10 +302,10 @@ class GuidePipeline:
                 ))
         finally:
             self.stats.seconds = self._clock() - started
-            event_log.write_summary(self.stats.as_dict())
-            event_log.close()
             if self.obstacles is not None:
                 self.stats.obstacle_scan_ms = list(self.obstacles.scan_ms)
+            event_log.write_summary(self.stats.as_dict())
+            event_log.close()
             self._abandon_switch()
         return self.stats
 

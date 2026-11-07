@@ -1,6 +1,7 @@
 """Unknown-obstacle layer (floor scan): warns about things YOLO can't name, never claims the way is clear.
 Owner: iesa242."""
 import threading
+import json
 import time
 from pathlib import Path
 
@@ -8,7 +9,7 @@ import numpy as np
 import pytest
 from guide_helpers import FakeClock, FakeModel, FakeSource, RecordingSpeaker
 
-from sentra.guide.alerts import AlertPolicy
+from sentra.guide.alerts import AlertConfig, AlertPolicy
 from sentra.guide.detector import ObjectDetector
 from sentra.guide.obstacles import (CANT_JUDGE, NONE_FOUND, OBSTRUCTION, UNKNOWN_OBSTACLE, ObstacleScanner,
                                     free_space)
@@ -60,6 +61,7 @@ IMAGE = np.zeros((480, 640, 3), np.uint8)
 def scan_twice(s, f=None):
     for _ in range(2):  # an obstruction needs 2 of the last 3 scans
         s.submit(IMAGE, 0.0)
+        s.augment(f or frame())
     return s.augment(f or frame())
 
 
@@ -183,6 +185,9 @@ def test_a_close_unknown_obstacle_is_a_caution_and_never_named(tmp_path):
     summary = stats.as_dict()
     assert summary["obstacle_scans"] == 8 and summary["obstacle_frames"] >= 1
     assert "floor scan ran 8 times" in stats.summary()
+    saved = json.loads(next(tmp_path.glob("*.jsonl")).read_text().splitlines()[-1])
+    for key in ("obstacle_scans", "median_obstacle_scan_ms", "obstacle_frames"):
+        assert saved[key] == summary[key]
 
 
 def test_a_further_unknown_obstacle_is_a_plain_possible_obstacle(tmp_path):
@@ -225,6 +230,61 @@ def test_developer_view_draws_the_floor_scan(tmp_path):
 
 
 # Real model (skipped until the indoor segmentation weights have been downloaded once) ---------------------------
+
+@pytest.mark.parametrize("first", ["blip", "explained", "no_floor"])
+def test_confirmation_requires_two_qualifying_unexplained_scans(first):
+    classes = room(pole=(30, 31, 20)) if first == "blip" else room(box=(26, 36, 30))
+    if first == "no_floor":
+        classes[:] = WALL
+    s = scanner(classes)
+    chair = Detection("chair", 56, 0.85, (260., 250., 360., 478.))
+    s.submit(IMAGE, 0.0)
+    s.augment(frame(chair) if first == "explained" else frame())
+    s.model.classes = room(box=(26, 36, 30))
+    s.submit(IMAGE, 0.0)
+    for _ in range(10):
+        assert not s.augment(frame()).detections  # reusing a scan is not confirmation
+    s.submit(IMAGE, 0.0)
+    assert s.augment(frame()).detections
+
+
+@pytest.mark.parametrize("label", ["handbag", "skateboard", "bottle", "laptop", "unconfirmed person"])
+def test_unspoken_labels_do_not_suppress_unknown_obstacles(label):
+    det = Detection(label, 0, 0.7, (260., 250., 360., 478.))
+    out = scan_twice(scanner(room(box=(26, 36, 30))), frame(det))
+    assert out.detections[-1].label == UNKNOWN_OBSTACLE
+
+
+def test_active_policy_controls_which_boxes_explain_obstacles():
+    det = Detection("handbag", 0, 0.7, (260., 250., 360., 478.))
+    s = scanner(room(box=(26, 36, 30)))
+    policy = AlertPolicy(AlertConfig(labels=None))
+    for _ in range(3):
+        s.submit(IMAGE, 0.0)
+        assert s.augment(frame(det), policy=policy).detections == (det,)
+
+
+def test_reset_discards_a_background_scan_already_running():
+    started, release = threading.Event(), threading.Event()
+
+    class BlockingModel(FakeSegModel):
+        def predict(self, image, **kwargs):
+            started.set()
+            assert release.wait(2)
+            return super().predict(image, **kwargs)
+
+    s = ObstacleScanner(model=BlockingModel(room(box=(26, 36, 30))), clock=FakeClock())
+    try:
+        s.submit(IMAGE, 0.0)
+        assert started.wait(2)
+        s.reset()
+        release.set()
+        s.close()  # join ensures the in-flight result has attempted to store
+        assert s.latest() is None
+        assert not s.augment(frame()).detections
+    finally:
+        release.set()
+        s.close()
 
 WEIGHTS = Path(__file__).resolve().parents[1] / "yolo26n-sem-ade20k.pt"
 
