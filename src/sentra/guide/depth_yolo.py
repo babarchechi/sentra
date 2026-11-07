@@ -125,6 +125,12 @@ class YoloDepth:
         meters, valid = box_depth(depth, box, frame_size, shrink=self.shrink, percentile=self.percentile)
         return (None if meters is None else meters * self.scale), valid
 
+    def reset(self) -> None:
+        """Forget remembered distances (after a camera switch or rotation, when track IDs restart from 1) and
+        measure on the next frame."""
+        self._cache.clear()
+        self._frames = 0
+
     def status(self) -> str:
         ms = f", {median(self.run_ms):.0f} ms" if self.run_ms else ""
         calibrated = f", x{self.scale:.2f} calibrated" if self.scale != 1.0 else ""

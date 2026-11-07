@@ -380,6 +380,9 @@ class GuidePipeline:
             self.person_check.reset()
         self.spatial.reset()
         self.policy.reset()
+        reset_depth = getattr(self.depth, "reset", None)  # a remembered distance belongs to the old view's track IDs
+        if reset_depth is not None:
+            reset_depth()
 
     def _idle(self, message: str) -> None:
         idle = getattr(self.sink, "idle", None)
