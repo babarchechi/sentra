@@ -98,7 +98,9 @@ def not_announced_reason(policy: AlertPolicy, obj: SpatialObject) -> str:
         return "not on alert list"
     if obj.view_height < cfg.min_view_height:
         return "small / far away"
-    return f"score under {cfg.announce_confidence:.0%}"
+    if det.confidence < cfg.announce_confidence:
+        return f"score under {cfg.announce_confidence:.0%}"
+    return policy.quiet_reason(obj) or "not announced"
 
 
 def path_position(obj: SpatialObject) -> str:

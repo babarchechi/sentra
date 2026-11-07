@@ -56,7 +56,9 @@ def test_something_big_in_the_middle_gets_a_caution():
 
 def test_ahead_but_not_big_and_big_but_to_the_side_are_ordinary_cues():
     assert [(a.text, a.caution) for _, a in play([(0.5, [CHAIR])])] == [("Chair ahead.", False)]
-    assert [(a.text, a.caution) for _, a in play([(0.5, [BIG_CHAIR_LEFT])])] == [("Chair to your left.", False)]
+    assert play([(0.5, [BIG_CHAIR_LEFT])]) == []  # fully off to the side: quiet by default (not in the path)
+    sides = AlertConfig(announce_sides=True)
+    assert [(a.text, a.caution) for _, a in play([(0.5, [BIG_CHAIR_LEFT])], sides)] == [("Chair to your left.", False)]
 
 
 def test_one_big_frame_is_not_enough():
@@ -77,7 +79,7 @@ def test_cautioning_stops_once_it_is_no_longer_in_the_way_and_says_nothing_reass
     cautions = [t for t, a in said if a.caution]
     assert len(cautions) == 3 and cautions[-1] < 5.0  # at ~0.2, 2.2, 4.2 s, none after it left
     after = [a.text for t, a in said if t >= 5.0]
-    assert after == ["Chair to your left."]  # no caution for something to the side, and no "clear"
+    assert after == []  # gone, then off to the side: quiet. Never a "clear".
 
 
 def test_something_announced_that_comes_close_gets_its_caution_straight_away():

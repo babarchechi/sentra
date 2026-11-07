@@ -320,7 +320,7 @@ def test_r_key_rotation_turns_frames_and_starts_fresh(tmp_path):
     assert sink.sizes[:4] == [(640, 480)] * 4 and sink.sizes[4:] == [(480, 640)] * 6
     assert controls.rotation == 90 and controls.rotations == {0: 90} and resets == [True]
     # The same box is now in the right third of a narrower frame, and the cooldown restarted:
-    assert speaker.said == ["Chair ahead.", "Chair to your right."]
+    assert speaker.said == ["Chair ahead.", "Chair ahead, slightly right."]  # still overlaps the path
 
 
 def test_a_stalled_camera_gives_idle_updates_and_then_says_it_is_waiting(tmp_path, monkeypatch):

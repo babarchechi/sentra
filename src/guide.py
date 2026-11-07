@@ -74,6 +74,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Don't give danger warnings. By default something big in the middle of the view gets "
                              "'Caution, chair ahead.' (said first, repeated every --caution-every s while it stays, "
                              "and the phone page vibrates). There is never a 'safe' signal")
+    parser.add_argument("--announce-sides", action="store_true",
+                        help="Also announce things fully off to the side and far away (by default only things in "
+                             "the path ahead are named, e.g. a chair against the wall stays quiet)")
     parser.add_argument("--caution-every", type=float, default=2.0,
                         help="Seconds between repeats of a caution while the thing stays in the way (default 2: it "
                              "keeps cautioning until the thing is no longer in the way)")
@@ -102,6 +105,7 @@ def build_policy(args: argparse.Namespace) -> AlertPolicy:
         remind_after_s=args.remind_after or None,
         min_gap_s=args.min_gap,
         caution=not args.no_caution,
+        announce_sides=args.announce_sides,
         caution_repeat_after_s=args.caution_every,
         **({"labels": None} if args.all_labels else {}),
     )
