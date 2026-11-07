@@ -96,6 +96,23 @@ What it shows:
   previous one to finish.
 - Battery fallback stays `--imgsz 320`, as above.
 
+### 2.2 Cost of `--person-check` (pose model confirms people)
+
+Same 30 fps `bus.jpg` clip, 640, 20 + 200 frames (Iesa's laptop, 2026-11-07).
+
+| Run | Power | Tracking | fps | Capture→decision median | Pose model ran on |
+| --- | --- | --- | --- | --- | --- |
+| no check | plugged in | on | 27.6 | 50 ms | – |
+| `--person-check` | plugged in | on | 27.8 | 34 ms | 13 of 220 frames (36 ms each) |
+| no check | battery | off | 14.6 | 87 ms | – |
+| `--person-check`, first version (checked every frame) | battery | off | 7.2 | 154 ms | 220 of 220 |
+| `--person-check`, reusing verdicts for boxes in nearly the same place | battery | off | 12.4 | 85 ms | 56 of 220 |
+
+With tracking it's free (babar measured the same on the demo laptop: 29 fps, 9 of 220 frames). Without tracking
+(`--no-track`, the fallback) it costs about 15% fps instead of half. Rows on battery only compare with each other.
+A rejected "person" (a hand, or someone cut off at the edge) is re-checked every 0.5 s, so with one in view the pose
+model runs about twice a second.
+
 ## 3. Devices
 
 | Date | Phone | App / connection | Orientation | Result |
@@ -179,3 +196,13 @@ YOLO26n detects the 80 COCO classes. It **does not** detect: glass doors and wal
 drop-offs, poles and posts (except the few named classes, like fire hydrant and stop sign), low-hanging branches and
 signs, wet floors, holes, cables, or most furniture outside its list. It can also mistake screens for a TV, posters for
 people, and so on. **Silence never means the way is clear.** That limitation goes in the pitch.
+
+**Hands and arms as "person"** (2026-11-07, Iesa): the object model calls the camera holder's own hands and arms
+"person" with scores as high as a real person's (0.51–0.87 vs 0.86–0.92), so "Person to your right." can be your own
+hand. `--person-check` (experimental, off by default) asks the pose model for a head, shoulders, hips or legs before
+saying "person". A box with no body seen is never named: off to the side it says nothing, and large and central it
+becomes "Possible obstacle ahead.". Known limits with the check on:
+- someone almost entirely out of frame (only an arm at the edge) isn't named;
+- someone right in front of the camera with only chest to waist in view may have no body found, so they get
+  "Possible obstacle ahead." rather than "Person ahead." (babar's `bus.jpg` crop: score 0.41–0.73 → obstacle);
+- not yet shown live on a real hand (the 2026-11-07 laptop run had no hand detected as a person at all).

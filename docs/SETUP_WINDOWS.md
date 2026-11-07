@@ -32,6 +32,13 @@ After every `git pull`, run `python -m pip install -r requirements.txt` again.
 python -c "from ultralytics import YOLO; YOLO('yolo26n.pt')"
 ```
 
+`--person-check` (experimental) also needs the pose model, `yolo26n-pose.pt` (7.5 MB, the one fall detection uses).
+It downloads the same way on first use; fetch it too before going offline:
+
+```powershell
+python -c "from ultralytics import YOLO; YOLO('yolo26n-pose.pt')"
+```
+
 After that, Sentra Guide needs no internet.
 
 ## 3. Camera permissions

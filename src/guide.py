@@ -26,6 +26,7 @@ from sentra.capture import FrameSource, parse_source
 from sentra.guide.alerts import AlertConfig, AlertPolicy
 from sentra.guide.cameras import CameraCatalog, is_stream
 from sentra.guide.detector import DEFAULT_DETECT_MODEL, ObjectDetector
+from sentra.guide.person_check import DEFAULT_POSE_MODEL, PersonCheck
 from sentra.guide.pipeline import GuideControls, GuidePipeline
 from sentra.guide.spatial import SpatialEstimator
 from sentra.guide.speech import PrintSpeech, Speaker, WindowsSpeech
@@ -52,7 +53,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--announce-conf", type=float, default=0.5,
                         help="Score needed to say an object's name (default 0.5)")
     parser.add_argument("--imgsz", type=int, default=640, help="Model input size; 480 or 320 is faster")
-    parser.add_argument("--no-track", action="store_true", help="Turn off ByteTrack (detections only)")
+    parser.add_argument("--no-track", action="store_true",
+                        help="Turn off ByteTrack (detections only). With --person-check, the pose model then runs "
+                             "more often (see docs/VALIDATION.md, Section 2.1)")
+    parser.add_argument("--person-check", action="store_true",
+                        help="Experimental: confirm people with the pose model, so the camera holder's hands and arms "
+                             "aren't announced as 'person' (a large central one becomes 'Possible obstacle'). Needs "
+                             f"{DEFAULT_POSE_MODEL}. Nearly free with tracking; with --no-track it runs more often")
+    parser.add_argument("--pose-model", default=DEFAULT_POSE_MODEL,
+                        help=f"Pose weights for --person-check (default {DEFAULT_POSE_MODEL})")
     parser.add_argument("--all-labels", action="store_true",
                         help="Announce every class the model knows, not just the obstacle list")
     parser.add_argument("--repeat-after", type=float, default=10.0,
@@ -138,9 +147,12 @@ def main() -> None:
     logging.getLogger("sentra").setLevel(logging.INFO)
 
     detector = ObjectDetector(args.model, conf=args.conf, imgsz=args.imgsz, track=not args.no_track)
-    log.info("Loading %s ...", args.model)
+    person_check = PersonCheck(args.pose_model, imgsz=args.imgsz) if args.person_check else None
+    log.info("Loading %s%s ...", args.model, "" if person_check is None else f" and {args.pose_model} (person check)")
     try:
         detector.warmup()
+        if person_check is not None:
+            person_check.warmup()
     except (ValueError, FileNotFoundError) as exc:
         raise SystemExit(str(exc)) from None
 
@@ -185,7 +197,8 @@ def main() -> None:
         sink = TeeSink(sink, page)
 
     pipeline = GuidePipeline(source, detector, sink, speaker=speaker, spatial=spatial, policy=policy,
-                             controls=controls, label=args.label, open_source=open_source)
+                             controls=controls, label=args.label, open_source=open_source,
+                             person_check=person_check)
     try:
         pipeline.run()
     except KeyboardInterrupt:
