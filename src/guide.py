@@ -65,7 +65,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--all-labels", action="store_true",
                         help="Announce every class the model knows, not just the obstacle list")
     parser.add_argument("--repeat-after", type=float, default=10.0,
-                        help="Seconds before the same object and direction is said again (default 10)")
+                        help="Never repeat the same object and direction sooner than this (default 10 s). Unchanged things are not repeated anyway, unless they leave and come back or more of them appear")
+    parser.add_argument("--remind-after", type=float, default=30.0,
+                        help="Remind about objects still ahead this often, in seconds (default 30; 0 = never)")
     parser.add_argument("--min-gap", type=float, default=2.5,
                         help="Minimum seconds between any two announcements (default 2.5)")
     parser.add_argument("--voice", choices=("windows", "print", "off"), default="windows",
@@ -90,6 +92,7 @@ def build_policy(args: argparse.Namespace) -> AlertPolicy:
         announce_confidence=args.announce_conf,
         uncertain_confidence=min(0.3, args.announce_conf),
         repeat_after_s=args.repeat_after,
+        remind_after_s=args.remind_after or None,
         min_gap_s=args.min_gap,
         **({"labels": None} if args.all_labels else {}),
     )

@@ -62,7 +62,7 @@ Python 3.12 for Windows).
 | "Possible obstacle ahead." | score 0.3–0.5, central, ≥ 35% of frame height, not overlapping a confident box | Something big is in front but the model isn't sure what |
 | Ignore boxes shorter than | 10% of the frame height | Far away or tiny |
 | Persistence | seen in 3 of the last 5 frames | No one-frame flickers |
-| Same cue again | after 10 s (`--repeat-after`) | Restraint |
+| Same cue again | Not while it stays in view. Again only if it comes back after ≥ 3 s out of view, more of them appear (1 → 2 chairs), or as a reminder every 30 s for central objects (`--remind-after`, 0 = never). Never sooner than 10 s (`--repeat-after`). A new direction is a new cue | Say new information, not the same thing again |
 | Any two cues | ≥ 2.5 s apart (`--min-gap`) | Room to think between cues |
 | Per frame | at most 1 cue, the most important | Importance: central and large → central → touching the centre → side; then confident before uncertain, bigger, higher score |
 | Distances | spoken only if `DepthEstimate.validated` | No invented meters |
