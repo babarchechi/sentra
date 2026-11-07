@@ -35,6 +35,8 @@ Laptop: Windows 11 Home, CPU only. Model `yolo26n.pt`, `--imgsz 640`, ByteTrack 
 | 2026-11-06 | iPhone 14 Pro Max, DroidCam over eduroam, portrait, `--rotate 90` | Babar | 1323 / 56.1 | 23.6 | 26.8 | 42.9 | 15 | 0 | ✅ Upright; Babar confirmed cues and directions. Chair announced ahead, left and right; people incl. "2 people ahead/left/right"; "Possible obstacle ahead." ×1; "TV to your left." ×1 |
 | | Android (IP Webcam) | Iesa | | | | | | | |
 | 2026-11-06 | `src/guide_bench.py` at 640 / 480 / 320, synthetic 30 fps `bus.jpg` clip, **laptop on battery** | Iesa | 200 per setting | 15–16 (640), 19–21 (480), 29–30 (320, clip-limited) | 61–65 (640), 48–51 (480), 33–35 (320) | 78–81 (640), 65–71 (480), 42–52 (320) | n/a | 0 | Full table and notes in Section 2.1. Plugged-in run still to do |
+| 2026-11-07 | `src/guide_bench.py` at 640 / 480 / 320, synthetic 30 fps `bus.jpg` clip, **demo laptop (Babar's), plugged in** | Claude | 200 per setting | 29.1–30 (all sizes clip-limited) | 31–33 (640), 25 (480), 17 (320) | 34–42 (640), 25 (480), 17 (320) | n/a | 0 | Full table in Section 2.1. 640 with tracking keeps up with a 30 fps source on this laptop |
+| 2026-11-07 | Laptop webcam, 30 s headless check of `main` after merging #10 (`--no-view --voice print --max-seconds 30`) | Claude | 856 / 30.0 | 28.5 | 31 | 32 | 3 | 0 | "Person ahead." ×3, 10 s apart (cooldown). Plugged in |
 
 ### 2.1 Benchmark: model size and tracking (`src/guide_bench.py`)
 
@@ -65,6 +67,34 @@ What it shows:
 - No stale frames in any setting.
 
 Still to do: the same run plugged in, and on the Android stream (camera tests postponed).
+
+#### Demo laptop (Babar's), plugged in
+
+2026-11-07, run by Claude on Babar's laptop (the one that runs the demo): Windows 11 Home, AMD64 Family 25 Model 68,
+CPU only, Python 3.12.10, **on AC power** (Balanced power plan). Source: the same kind of clip as above (40 s, 30 fps
+slow pan over `bus.jpg`, 810 × 1080), rebuilt locally, so fps can't go above 30. 20 warm-up + 200 measured frames per
+row, `src/guide_bench.py` as merged in #10.
+
+Command: `python src/guide_bench.py --source bus_30fps_40s.mp4 --model yolo26n.pt`
+
+| imgsz | Tracking | Frames / s | fps | Model ms median / p90 | Capture→decision ms median / p90 | Objects / frame | Stale |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 640 | on | 200 / 6.84 | 29.1 | 33.3 / 37 | 42.2 / 60.6 | 4.4 | 0 |
+| 640 | off | 200 / 6.62 | 30 | 31.4 / 33.6 | 33.9 / 40.3 | 4.5 | 0 |
+| 480 | on | 200 / 6.63 | 30 | 25.1 / 28.4 | 25.3 / 30 | 4.3 | 0 |
+| 480 | off | 200 / 6.64 | 30 | 25 / 27.4 | 25.5 / 28.1 | 4.4 | 0 |
+| 320 | on | 200 / 6.62 | 30 | 16.8 / 19.3 | 17 / 19.6 | 3.7 | 0 |
+| 320 | off | 200 / 6.64 | 30 | 16.6 / 18.7 | 16.9 / 18.9 | 3.8 | 0 |
+
+What it shows:
+- **Plugged in, this laptop is about twice as fast as Iesa's battery run**, and matches the ~27–30 ms model time in the
+  Section 2 webcam and iPhone runs.
+- **640 with tracking keeps up with a 30 fps camera here** (33 ms per frame), so it stays the demo default. With every
+  setting at the 30 fps cap, this clip can't show how much faster 480 or 320 would run.
+- Capture→decision at 640 with tracking (42 ms median, 61 ms p90) is higher than without (34 / 40 ms). Unconfirmed
+  guess: at ~33 ms per frame the loop is right at the camera's frame interval, so a frame sometimes waits for the
+  previous one to finish.
+- Battery fallback stays `--imgsz 320`, as above.
 
 ## 3. Devices
 
