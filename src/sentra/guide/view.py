@@ -2,6 +2,7 @@
 
 Keys (click the window first): m mute or unmute the voice, p privacy (hide the camera image), q or Esc quit,
 c open the camera list (then 1-9 to pick, Esc to close it). The list can also be opened and used with the mouse.
+r turns the current camera's picture another 90 degrees clockwise (remembered per camera).
 
 Top bar: camera-on indicator, source, fps, latency, distance mode, voice state.
 Toolbar (when a camera list is given): the camera dropdown and status messages such as "Switching to ...".
@@ -229,6 +230,8 @@ class GuideView:
             self.controls.muted = not self.controls.muted
         elif key == ord("p"):
             self.controls.privacy = not self.controls.privacy
+        elif key == ord("r"):
+            self.controls.rotate_clockwise()
 
     # Drawing -----------------------------------------------------------------------------------------------
 
@@ -236,6 +239,9 @@ class GuideView:
         """The last frame's screen (or a blank one) with `message` over the video, and a fresh toolbar."""
         if self._last_base is not None:
             canvas = self._last_base.copy()
+            if self.controls.privacy:
+                # The last frame may have been drawn before p was pressed: never show it while privacy is on.
+                canvas[BAR + self.toolbar:canvas.shape[0] - BAR] = 0
         else:
             h, w = BLANK_SIZE
             canvas = np.zeros((h + 2 * BAR + self.toolbar, w, 3), np.uint8)
@@ -293,7 +299,7 @@ class GuideView:
         controls = self.controls
         recent = time.perf_counter() - controls.notice_at < NOTICE_S
         text, color = ((controls.notice, YELLOW) if controls.notice and (controls.switching or recent)
-                       else ("c: choose camera", GREY))
+                       else (f"c: choose camera   r: rotate ({controls.rotation} deg)", GREY))
         x = MENU_X + max(self.menu.width, _text_width(self.menu.header() + "    ") + 2 * MENU_PAD + 16) + 14
         _put(canvas, text, (x, BAR + self.toolbar - 10), 0.5, color, 1)
 

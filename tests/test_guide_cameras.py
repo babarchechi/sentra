@@ -195,6 +195,36 @@ def test_idle_screen_keeps_the_last_frame_and_shows_the_message():
     assert (middle == YELLOW).all(axis=2).any()  # the message is drawn over the video area
 
 
+def _frame_update(color=(0, 255, 0)):
+    """A GuideUpdate with a solid-colour 480x640 camera image and nothing detected."""
+    from sentra.guide.schema import DetectionFrame, GuideUpdate
+
+    image = np.zeros((480, 640, 3), np.uint8)
+    image[:] = color
+    frame = DetectionFrame(1, 0.0, 640, 480, (), source="test")
+    return GuideUpdate(frame, (), (), image, fps=25.0, latency_ms=30.0, depth_status="Distance: off")
+
+
+def _green_pixels(canvas):
+    return int((canvas == [0, 255, 0]).all(axis=2).sum())
+
+
+@pytest.mark.parametrize("with_menu", [True, False])
+def test_privacy_pressed_while_waiting_hides_the_frozen_frame(with_menu):
+    # babar's repro on #11: privacy turned on after the last frame, while switching or with a stalled stream.
+    if with_menu:
+        view, controls = make_view(BUILT_IN)
+    else:
+        controls = GuideControls()
+        view = GuideView(controls, AlertPolicy(), show_window=False)
+    assert _green_pixels(view.render(_frame_update())) > 250_000  # privacy off: the camera image is shown
+    controls.privacy = True
+    assert _green_pixels(view.render_idle("Waiting for the camera...")) == 0
+    assert _green_pixels(view.render_idle()) == 0
+    controls.privacy = False
+    assert _green_pixels(view.render_idle()) > 250_000  # back on: the last frame may be shown again
+
+
 def test_close_after_the_window_was_closed_with_x_does_not_crash(monkeypatch):
     view = GuideView(GuideControls(), AlertPolicy(), show_window=False)
     view._window_open = True
@@ -212,6 +242,46 @@ def test_view_without_a_camera_list_has_no_toolbar():
     assert view.menu is None and view.render_idle().shape == (480 + 2 * BAR, 640, 3)
     view.handle_key(ord("c"))  # no list to open; nothing happens
     assert not view.should_stop()
+
+
+def test_r_rotates_the_current_camera_and_remembers_it():
+    view, controls = make_view(BUILT_IN)
+    view.handle_key(ord("r"))
+    view.handle_key(ord("r"))
+    assert controls.rotation == 180 and controls.rotations == {"windows:HP 5MP Camera": 180}
+    assert controls.notice == "Rotation 180 degrees"
+    for _ in range(2):
+        view.handle_key(ord("r"))
+    assert controls.rotation == 0 and not view.should_stop()
+
+
+def test_tee_sink_passes_idle_updates_to_the_window():
+    from sentra.guide.view import HeadlessSink
+    from sentra.guide.web import TeeSink
+
+    class Window(HeadlessSink):
+        def __init__(self):
+            super().__init__()
+            self.idles = []
+
+        def idle(self, message):
+            self.idles.append(message)
+
+    window = Window()
+    TeeSink(window, HeadlessSink()).idle("Switching to HP 5MP Camera...")  # the page sink has no idle(): fine
+    assert window.idles == ["Switching to HP 5MP Camera..."]
+
+
+def test_extra_sources_take_an_optional_rotation():
+    from guide import build_parser, parse_extra_sources
+
+    args = build_parser().parse_args(
+        ["--extra-source", "http://10.0.0.7:4747/video", "90", "--extra-source", "http://10.0.0.8:8080/video"])
+    assert parse_extra_sources(args.extra_source) == [
+        ("http://10.0.0.7:4747/video", 90), ("http://10.0.0.8:8080/video", 0)]
+    for bad in (["http://x/video", "45"], ["0"], ["http://x/video", "90", "extra"]):
+        with pytest.raises(ValueError):
+            parse_extra_sources([bad])
 
 
 @pytest.mark.parametrize("key", [ord("m"), ord("p")])
