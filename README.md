@@ -1,36 +1,42 @@
 # Sentra
 
-> **Status: Hackathon prototype (Capital Hacks 5.0) — initial pose-tracking setup only.**
+> **Status: Hackathon prototype (Capital Hacks 5.0). Phase 1 in progress.**
 > **Sentra is not a medical device and not an emergency-response or life-safety system.**
-> Nothing in this repository detects falls yet. The pose model outputs body keypoints, not medical-grade fall detection.
+> Fall detection is still being built. Today the app tracks people and their body keypoints; it does not flag falls yet.
 
-Sentra is a consent-based visual safety-monitoring prototype. Phase 0 (this commit) only sets up the development
-environment and a small camera test that draws YOLO26n-Pose skeletal keypoints on a live webcam feed.
+Sentra is a consent-based visual safety-monitoring prototype. It watches consenting people through a webcam or phone
+camera and tracks their body pose. When Phase 1 is finished, it will show **"Possible fall — please check"** when someone
+drops quickly and stays down, so a human can confirm or dismiss it.
 
-## Tested setup (Phase 0, 2026-11-06)
+- **Team plan** (who does what, the shared data contract, Git workflow): [docs/PHASE1_PLAN.md](docs/PHASE1_PLAN.md)
+- **Test results:** [docs/evaluation.md](docs/evaluation.md)
 
-| Item | Version / result |
-| --- | --- |
-| OS | Windows 11 Home (build 26200), built-in laptop webcam (640×480) |
-| Python | 3.12.10, 64-bit, **python.org installer** (see Troubleshooting) |
-| ultralytics | 8.4.203 |
-| torch | 2.15.0+cpu (no GPU / CUDA used) |
-| opencv-python | 5.0.0.93 |
-| lap (needed by ByteTrack) | 0.5.14 |
-| Pose model | `yolo26n-pose.pt` — downloads automatically on first run (7.5 MB) |
+## What works today
 
-| Test | Result |
-| --- | --- |
-| `import ultralytics, cv2, torch` | OK |
-| Model load + sample image (`bus.jpg`) | OK — task `pose`, 5 people, 17 keypoints each, ~69 ms/frame on CPU |
-| Webcam capture (index 0) | OK — 640×480, ~33 fps raw |
-| `python src/camera_test.py --source 0` | OK — skeleton overlay visible, `q` quits cleanly |
-| `python src/camera_test.py --source 0 --track` | OK — per-person tracking IDs shown, `q` quits cleanly |
-| Phone / IP camera stream | **Not tested yet (pending)** |
+| Part | Owner | State |
+| --- | --- | --- |
+| Camera input and pose pipeline (`capture.py`, `pipeline.py`, `src/main.py`) | babarchechi | ✅ Webcams, phone streams, `--rotate`, auto-reconnect, state-change log |
+| Windows virtual cameras: Phone Link, DroidCam (`windows_camera.py`) | iesa242 | 🧪 Experimental, opt-in |
+| Posture analysis (`posture.py`) | iesa242 | 🚧 In progress. The stub reports everyone as `unknown` |
+| Dashboard and alerts (`src/sentra/ui/`) | Swechha03 | 🚧 In progress. The stub shows the video; `q` quits |
+
+```text
+Camera (webcam, phone stream, or Windows camera)
+   │   capture.py: newest frame only, reconnects, optional rotation
+   ▼
+YOLO26n-Pose + ByteTrack   pipeline.py
+   │   PoseFrame: each person's track ID, 17 keypoints, box
+   ▼
+PostureAnalyzer   posture.py
+   │   PersonStatus: state, confidence, reason
+   ▼
+Dashboard   ui/: live view, "possible fall" alert, privacy mode
+```
 
 ## Setup
 
-Use **Python 3.11 or 3.12 (64-bit) from https://www.python.org/downloads/** — not the Microsoft Store build (see Troubleshooting).
+Use **Python 3.11 or 3.12 (64-bit) from https://www.python.org/downloads/**, not the Microsoft Store build (see
+Troubleshooting).
 
 ```powershell
 git clone https://github.com/babarchechi/sentra.git
@@ -41,88 +47,154 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-If you have the `py` launcher you can use `py -3.12 -m venv .venv` instead. If PowerShell blocks activation, run
-`Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` first, or skip activation and use `.\.venv\Scripts\python.exe`
-in place of `python`.
+- **`py` launcher:** if you have it, `py -3.12 -m venv .venv` also works.
+- **Activation blocked:** if PowerShell blocks activation, run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`
+  first, or skip activation and use `.\.venv\Scripts\python.exe` in place of `python`.
+- **Other platforms:** `requirements.txt` is a `pip freeze` from a Windows/CPU machine. The `winrt-*` packages install
+  only on Windows. On macOS/Linux or with an NVIDIA GPU, the PyTorch pins may need adjusting.
 
-`requirements.txt` is a `pip freeze` from the Windows/CPU machine above. On macOS/Linux or with an NVIDIA GPU the
-PyTorch pins may need adjusting.
+After `git pull`, run `python -m pip install -r requirements.txt` again in case new packages were added.
 
-## Run the camera test
+## Run the app
+
+From the repo root:
 
 ```powershell
-python src/camera_test.py --source 0            # local webcam, pose keypoints
-python src/camera_test.py --source 0 --track    # plus ByteTrack per-person IDs
+python src/main.py --source 0
 ```
 
-Click the video window and press `q` to quit. CPU inference is slower than the raw camera rate; that is expected.
+Click the video window and press `q` to quit (or Ctrl+C in the terminal). The pose model (`yolo26n-pose.pt`, 7.5 MB)
+downloads automatically the first time.
 
-Tracking IDs are temporary and can change when people overlap or leave and re-enter the frame. Sentra does not
-identify individuals.
+| Option | What it does |
+| --- | --- |
+| `--source 0` | Camera to use: a webcam number (`0` built-in, `1` usually a USB camera), a stream URL, or on Windows `phone` / `windows:<name>` (below) |
+| `--rotate 90` | Turn frames upright: `0`, `90`, `180` or `270` degrees clockwise. **A phone held in portrait needs 90 or 270.** |
+| `--privacy` | Start in skeleton-only privacy mode (the stub shows a black screen for now) |
+| `--model` | Pose model file (default `yolo26n-pose.pt`) |
 
-### Optional: phone or IP camera (only after the webcam works)
+**Always check that people appear upright on screen.** A sideways image makes a standing person look like they're
+lying down, which posture analysis will read as a fall.
 
-Use an IP-camera app on a phone you own, on the same trusted Wi-Fi, and pass the exact URL the app shows:
+**Logging:** each run writes state changes (no images) to `outputs/transitions_<date>_<time>.csv`. The `outputs/`
+folder is git-ignored.
+
+Tracking IDs are temporary and can change when people overlap or leave and re-enter the frame. Sentra does not identify
+individuals.
+
+### Phone camera (tested path: an IP camera app over the phone's hotspot)
+
+Campus Wi-Fi such as eduroam usually blocks phone-to-laptop connections, so **connect the laptop to the phone's own
+hotspot**. That also keeps the stream private.
+
+| Phone | App | Command |
+| --- | --- | --- |
+| iPhone | **DroidCam**: choose *PC Webcam*; no Windows client needed. Turn on Personal Hotspot with **Maximize Compatibility**, and keep the app on screen with Auto-Lock off | `python src/main.py --source "http://172.20.10.1:4747/video" --rotate 90` (drop `--rotate` in landscape) |
+| Android | **IP Webcam**: tap *Start server* and use the address it shows | `python src/main.py --source "http://<address it shows>/video"` |
+
+- **The address:** `172.20.10.1` is the iPhone's address on its own hotspot. Otherwise, use the exact address your app
+  shows. Before running Sentra, check it in a browser, then close the tab, because these apps often serve only one
+  viewer at a time.
+- **Keep URLs and passwords private:** never commit stream URLs or passwords, and never expose a camera to the public
+  internet.
+
+### USB camera
+
+Plug it in and try `python src/main.py --source 1`. If that's still the built-in camera, try `2`.
+
+### Optional, Windows only: Phone Link or DroidCam as a Windows camera (experimental)
+
+OpenCV can't open Windows virtual cameras such as Phone Link's *Use as a connected camera* or DroidCam's Windows client.
+`src/main.py` can read them through the Windows camera API when you ask for them by name. Numbered webcams and URLs are
+unaffected.
 
 ```powershell
-python src/camera_test.py --source "http://PHONE_IP:PORT/ACTUAL_VIDEO_PATH"
-python src/camera_test.py --source "rtsp://PHONE_IP:PORT/ACTUAL_STREAM_PATH"
-```
-
-These are placeholders. Never commit stream URLs or credentials, and never expose a camera to the public internet.
-
-### Optional, Windows only: Phone Link or DroidCam in the main app (experimental)
-
-OpenCV can't open Windows virtual cameras such as Phone Link's *Use as a connected camera* or DroidCam. `src/main.py`
-can read them through the Windows camera API when you ask for them by name; numbered webcams and URLs are unaffected.
-
-```powershell
-python -m sentra.windows_camera                 # list camera names (run from src/)
-python src/main.py --source phone               # Phone Link connected camera
-python src/main.py --source "windows:DroidCam"  # any camera, by part of its name
+cd src; python -m sentra.windows_camera; cd ..    # list camera names
+python src/main.py --source phone                 # Phone Link connected camera
+python src/main.py --source "windows:DroidCam"    # any camera, by part of its name
 ```
 
 Not yet shown working end to end with live video: Phone Link has only delivered its loading spinner in testing. The IP
 camera route above is the supported phone path.
 
+### Phase 0 quick check
+
+`python src/camera_test.py --source 0` (add `--track` for IDs) is the original standalone pose test. It's handy for
+checking a camera without the rest of the app.
+
+## Tests
+
+```powershell
+python -m pytest -q
+```
+
+35 tests, all passing on Windows. Without the `winrt` packages (macOS/Linux), the Windows camera tests are skipped. The
+tests use fake cameras and fake model results, plus one test that runs the real model on a sample image if
+`yolo26n-pose.pt` has been downloaded.
+
+## Tested setup
+
+| Item | Version |
+| --- | --- |
+| OS | Windows 11 Home (build 26200) |
+| Python | 3.12.10, 64-bit, python.org installer |
+| ultralytics / torch / opencv-python | 8.4.203 / 2.15.0+cpu (no GPU) / 5.0.0.93 |
+
+| Check (2026-11-06) | Result |
+| --- | --- |
+| Built-in webcam, `python src/main.py --source 0` | ✅ Skeleton and tracking ID, `q` quits, CSV written |
+| iPhone + DroidCam over Personal Hotspot | ✅ Landscape; ✅ portrait with `--rotate 90` |
+| Windows camera reader, `windows:HP 5MP` (by iesa242) | ✅ 1280×720, about 26 fps |
+| Android + IP Webcam | ⏳ Results pending |
+| USB camera | ⏳ Not tested yet |
+| Auto-reconnect on a real phone stream | ⏳ Covered by tests with fake cameras only |
+| Phone Link connected camera | ⏳ Only the loading spinner so far |
+
+Details in [docs/evaluation.md](docs/evaluation.md).
+
 ## Privacy and consent
 
 - Test only with cameras you are authorized to use and people who have agreed to be on camera.
 - No real patient, resident, or other non-consenting footage.
-- The camera test does **not** record, save, or upload video; frames are processed in memory and discarded.
-- `.gitignore` blocks videos, model weights, `.env` files, and virtual environments from being committed.
+- Sentra does **not** record, save, or upload video. Frames are processed in memory and discarded; only state-change
+  CSVs are written, to `outputs/`.
+- `.gitignore` blocks videos, model weights, `outputs/`, `.env` files, and virtual environments from being committed.
 
 ## Troubleshooting
 
-- **`Cannot open camera source` / OpenCV warns `can't be used to capture by index`:** if your Python came from the
+- **`Cannot open camera source`, or OpenCV warns `can't be used to capture by index`:** if your Python came from the
   Microsoft Store, Windows can block it from the camera even when camera access is on. Install Python from python.org
   and recreate the venv. Also check *Settings → Privacy & security → Camera* and close Zoom/Teams.
+- **People look sideways or lying down:** add `--rotate 90` (or `270` if they come out upside down).
+- **Phone stream won't connect:** use the phone's hotspot rather than campus Wi-Fi, and close any browser tab showing
+  the stream. On iPhone, keep DroidCam on screen.
 - **Project folder is inside OneDrive:** OneDrive will try to sync the ~1 GB venv. Create the venv outside OneDrive
   instead, e.g. `python -m venv $HOME\.venvs\sentra`, and activate it from there.
-- **`--track` first run says `lap` not found:** run `python -m pip install -r requirements.txt` again; `lap` is pinned there.
+- **A test is skipped, or `--track` says `lap` not found:** run `python -m pip install -r requirements.txt` again.
 
 ## Project layout
 
 ```text
 sentra/
-├── .gitignore
 ├── README.md
 ├── requirements.txt
+├── pyproject.toml               pytest settings
+├── docs/
+│   ├── PHASE1_PLAN.md           team plan: tracks, contract, workflow, timeline
+│   └── evaluation.md            test results
 ├── src/
-│   └── camera_test.py   # webcam / stream pose test (no recording, no fall detection)
-└── docs/
+│   ├── main.py                  the app
+│   ├── ui_demo.py               dashboard on fake events (Track C)
+│   ├── camera_test.py           Phase 0 standalone pose test
+│   └── sentra/
+│       ├── events.py            shared data contract
+│       ├── capture.py           camera input
+│       ├── windows_camera.py    Windows camera reader (experimental)
+│       ├── pipeline.py          pose model + tracking loop, state-change log
+│       ├── posture.py           posture analysis (Track A)
+│       └── ui/                  dashboards (Track C)
+└── tests/
 ```
-
-## Next-phase backlog (planned, not implemented)
-
-- Posture and motion analysis from keypoints (e.g. candidate "person on floor" signals) — prototype only, no medical claims
-- Phone / IP camera validation
-- Evaluation plan with consenting participants and staged scenarios
-- Alerting design (who is notified, false-positive handling, human confirmation)
-- Simple local UI / dashboard
-
-Team practice: keep `main` stable and work on branches such as `feature/camera-input`, `feature/posture-analysis`,
-`feature/ui`, merged through pull requests.
 
 ## Licensing note
 
