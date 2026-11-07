@@ -2,11 +2,13 @@
 
 Owner: iesa242. Speech and the debug view are tested in test_guide_speech_view.py (Swechha03)."""
 import json
+import time
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from sentra.guide.alerts import AlertConfig, AlertPolicy
 from sentra.guide.detector import ObjectDetector, detection_frame_from_result
 from sentra.guide.pipeline import GuideControls, GuidePipeline
 from sentra.guide.schema import Region
@@ -64,6 +66,77 @@ def test_muted_alerts_are_logged_but_not_spoken(tmp_path):
     assert pipeline.run().alerts == 1
     assert speaker.said == []
     assert json.loads(pipeline.log_path.read_text(encoding="utf-8").splitlines()[0])["spoken"] is False
+
+
+# Stale-frame rule: a frame that is too old by the time it's analysed never triggers a cue ---------------
+
+class KeepUpdates(HeadlessSink):
+    def __init__(self):
+        super().__init__()
+        self.updates = []
+
+    def publish(self, update):
+        self.updates.append(update)
+
+
+class AgedSource(FakeSource):
+    """Like FakeSource, but frame i (from 1) was captured `ages[i - 1]` seconds before it's read."""
+
+    def __init__(self, ages):
+        super().__init__(len(ages))
+        self.ages = list(ages)
+
+    def read(self, timeout=1.0):
+        ok, image, timestamp = super().read(timeout)
+        if ok:
+            timestamp -= self.ages.pop(0)
+        return ok, image, timestamp
+
+
+class SlowOnce(FakeModel):
+    """FakeModel that takes `seconds` extra on call number `slow_call` (from 1)."""
+
+    def __init__(self, rows, slow_call, seconds):
+        super().__init__(rows)
+        self.slow_call, self.seconds = slow_call, seconds
+
+    def track(self, image, **kwargs):
+        if len(self.calls) + 1 == self.slow_call:
+            time.sleep(self.seconds)
+        return super().track(image, **kwargs)
+
+
+def _alert_frames(sink):
+    return [(u.frame.frame_id, a.text) for u in sink.updates for a in u.alerts]
+
+
+def test_a_frame_that_arrives_late_is_never_announced(tmp_path):
+    # Frame 3 is the first with the chair in 3 of the last frames, but it was captured 1.5 s ago (e.g. a stalled
+    # stream delivering an old frame). It must not speak; the next fresh frame does.
+    speaker, sink = RecordingSpeaker(), KeepUpdates()
+    stats = GuidePipeline(AgedSource([0, 0, 1.5, 0, 0, 0]), ObjectDetector(model=FakeModel(CHAIR_AHEAD)), sink,
+                          speaker=speaker, output_dir=tmp_path).run()
+    assert _alert_frames(sink) == [(4, "Chair ahead.")]
+    assert [u.stale for u in sink.updates] == [False, False, True, False, False, False]
+    assert speaker.said == ["Chair ahead."] and stats.stale_frames == 1
+
+
+def test_a_frame_the_model_was_slow_on_is_never_announced(tmp_path):
+    # Same, but the frame was fresh when read and the model took too long on it. The age limit is lowered so
+    # the test only has to wait 0.15 s.
+    policy = AlertPolicy(AlertConfig(max_frame_age_s=0.1))
+    sink = KeepUpdates()
+    detector = ObjectDetector(model=SlowOnce(CHAIR_AHEAD, slow_call=3, seconds=0.15))
+    stats = GuidePipeline(FakeSource(5), detector, sink, policy=policy, output_dir=tmp_path).run()
+    assert _alert_frames(sink) == [(4, "Chair ahead.")]
+    assert sink.updates[2].stale and stats.stale_frames == 1
+
+
+def test_frames_that_are_all_late_never_speak(tmp_path):
+    speaker = RecordingSpeaker()
+    stats = GuidePipeline(AgedSource([1.2] * 8), ObjectDetector(model=FakeModel(CHAIR_AHEAD)), HeadlessSink(),
+                          speaker=speaker, output_dir=tmp_path).run()
+    assert speaker.said == [] and stats.alerts == 0 and stats.stale_frames == 8
 
 
 def test_detector_rejects_a_pose_model(monkeypatch):
