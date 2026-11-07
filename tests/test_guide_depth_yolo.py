@@ -144,3 +144,50 @@ def test_scale_corrects_the_estimate_and_low_percentile_measures_nearest_surface
     assert est.meters == pytest.approx(0.75) and not est.validated and "calibrated" in scaled.status()
     with pytest.raises(ValueError):
         YoloDepth(scale=0)
+
+
+def test_reset_forgets_remembered_distances_and_measures_on_the_next_frame():
+    model = FakeDepthModel()
+    provider = YoloDepth(model=model, every=10, max_age_s=5.0)
+    img = np.zeros((720, 1280, 3), np.uint8)
+    provider.estimate(img, frame(LEFT_CHAIR, t=0.0))
+    provider.reset()  # camera switched: track ID 1 is now a different object
+    moved = Detection("chair", 56, 0.9, (1000, 400, 1260, 710), track_id=1)  # same ID, other place (2.5 m)
+    assert provider.estimate(img, frame(moved, t=0.1))[0].meters == pytest.approx(2.5)  # measured, not the old 1.5
+    assert len(model.calls) == 2
+
+
+def test_pipeline_scene_reset_also_resets_depth(tmp_path):
+    from guide_helpers import CHAIR_AHEAD, FakeModel, FakeSource
+    from sentra.guide.detector import ObjectDetector
+    from sentra.guide.pipeline import GuidePipeline
+    from sentra.guide.view import HeadlessSink
+
+    class Depth(YoloDepth):
+        resets = 0
+
+        def reset(self):
+            Depth.resets += 1
+            super().reset()
+
+    pipeline = GuidePipeline(FakeSource(1), ObjectDetector(model=FakeModel(CHAIR_AHEAD)), HeadlessSink(),
+                             depth=Depth(model=FakeDepthModel()), output_dir=tmp_path)
+    pipeline._reset_scene()
+    assert Depth.resets == 1
+
+
+def test_bad_scale_and_calibrate_without_true_are_clean_usage_errors(monkeypatch, capsys):
+    import sys
+
+    import depth_check
+    import guide
+
+    with pytest.raises(SystemExit):
+        guide.build_parser().parse_args(["--depth-scale", "0"])
+    assert "must be above 0" in capsys.readouterr().err
+    assert guide.build_parser().parse_args(["--depth-scale", "0.3"]).depth_scale == 0.3
+
+    monkeypatch.setattr(sys, "argv", ["depth_check.py", "--calibrate"])
+    with pytest.raises(SystemExit):
+        depth_check.main()
+    assert "--calibrate needs --true" in capsys.readouterr().err

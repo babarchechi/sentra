@@ -38,6 +38,17 @@ from sentra.guide.web import DEFAULT_HOST, DEFAULT_PORT, TeeSink, WebSpeechPage,
 log = logging.getLogger("sentra")
 
 
+def positive_float(text: str) -> float:
+    """argparse type: a number above 0 (so a bad value is a clean usage error, not a traceback)."""
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a number") from None
+    if value <= 0:
+        raise argparse.ArgumentTypeError(f"must be above 0, got {text}")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Sentra Guide: experimental object awareness with short spoken cues (not a navigation aid)"
@@ -60,7 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
                              "more often (see docs/VALIDATION.md, Section 2.1)")
     parser.add_argument("--depth", choices=("none", "estimate"), default="none",
                         help="estimate: show an estimated distance per object (yolo26n-depth, a guess from the picture, not LiDAR). Shown on screen as 'est.', never spoken until tape-tested")
-    parser.add_argument("--depth-scale", type=float, default=1.0,
+    parser.add_argument("--depth-scale", type=positive_float, default=1.0,
                         help="Correction factor for --depth estimate from src/depth_check.py --calibrate (default 1.0)")
     parser.add_argument("--person-check", action="store_true",
                         help="Experimental: confirm people with the pose model, so the camera holder's hands and arms "

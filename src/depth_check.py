@@ -35,6 +35,10 @@ def main() -> None:
     ap.add_argument("--model", default=DEFAULT_DETECT_MODEL)
     ap.add_argument("--depth-model", default=DEFAULT_DEPTH_MODEL)
     args = ap.parse_args()
+    if args.calibrate and args.true is None:
+        ap.error("--calibrate needs --true <tape-measured meters>")
+    if args.scale <= 0:
+        ap.error("--scale must be above 0")
 
     detector = ObjectDetector(args.model, track=False)
     depth = YoloDepth(args.depth_model, every=1, scale=args.scale)

@@ -42,6 +42,9 @@ class NoDepth:
     def status(self) -> str:
         return "Distance: off (camera only)"
 
+    def reset(self) -> None:
+        pass
+
     def close(self) -> None:
         pass
 
