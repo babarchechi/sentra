@@ -47,6 +47,8 @@ Laptop: Windows 11 Home, CPU only. Model `yolo26n.pt`, `--imgsz 640`, ByteTrack 
 | | Swechha, iPhone (model: ____, LiDAR: ____) | DroidCam | | ⏳ |
 | 2026-11-06 | Disconnect test, **simulated on the laptop**: a relay between the app and Babar's iPhone stream cut the connection and refused new ones for 10 s | DroidCam over eduroam, via `127.0.0.1` relay | portrait + `--rotate 90` | ✅ No crash. Outage noticed within 1 s; **reconnected 9 s after the stream came back** (19 s after the cut); frames resumed at full rate. ⚠ Each failed reopen attempt took ~14 s, so recovery can take 10–20 s. No new cues after the reconnect (likely nothing new in view; not checked) |
 | | Disconnect test on the phone itself (close DroidCam 10 s) and Wi-Fi dropping out (no clean disconnect) | | | ⏳ Not tested |
+| 2026-11-07 | **Phone speech page, laptop only:** `python src/guide.py --source 0 --no-view --voice off --web` for 75 s, page opened in a browser on the same laptop (`http://127.0.0.1:8765/`) | laptop webcam, page on 127.0.0.1 | n/a | ✅ All 4 cues after the page connected appeared on it **in the same second** as in the event log (log `wall_time` vs page clock, 1 s resolution); the cue from before it connected showed as "earlier", unspoken. Page said "No signal from the laptop" within ~4 s of the app stopping. 21 fps, 61 ms median capture-to-decision with the page on. Speech was triggered after "Tap to turn on sound" but **not listened to** (Swechha) |
+| | Phone speech page **on a phone** over the hotspot (`--web-host <laptop hotspot IP>`): iPhone Safari (second phone, since DroidCam must stay in front) and Android Chrome | | | ⏳ Not tested: heard within ~1 s? screen-lock behaviour? |
 
 ## 4. Depth error (only if a depth adapter exists)
 

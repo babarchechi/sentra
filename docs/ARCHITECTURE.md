@@ -121,8 +121,11 @@ Options and current status: [DEPTH_OPTIONS.md](DEPTH_OPTIONS.md).
 
 ## 6. Network and privacy
 
-- Sentra Guide opens **no network ports** today. It only connects out to the phone's stream URL.
+- Without `--web`, Sentra Guide opens **no network ports**. It only connects out to the phone's stream URL.
+- With `--web`, `guide/web.py` serves the phone speech page on one address: 127.0.0.1 by default, or the laptop's
+  IP on the phone hotspot (`--web-host`). Listening on every network (0.0.0.0) and public addresses are refused.
+  It sends only `GuideAlert.to_dict()` and a status heartbeat over Server-Sent Events; there is no route that
+  returns a frame, and the page's Content-Security-Policy allows no images or media.
 - Use the phone's own hotspot (campus Wi-Fi often isolates devices, and the hotspot keeps the stream private).
 - Stream URLs are printed without credentials or query strings; video file names are printed without folders.
-- The planned phone page must listen only on the hotspot network and send only alert JSON, never frames.
 - More in [SAFETY_AND_PRIVACY.md](SAFETY_AND_PRIVACY.md).

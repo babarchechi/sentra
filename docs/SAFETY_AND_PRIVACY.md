@@ -28,8 +28,12 @@ Use this wording in the pitch, the UI and the README. Don't present user interes
   images. `outputs/` is git-ignored.
 - **No identification:** no face recognition. Tracking IDs are temporary numbers that can change, never identities.
 - **Bystanders:** avoid pointing the camera at people who haven't agreed. Don't record them.
-- **Network:** stream over the phone's own hotspot. Never expose a camera stream or the planned phone page to the
-  public internet. Never commit stream URLs, passwords, `.env` files, recordings or model weights.
+- **Network:** stream over the phone's own hotspot. Never expose a camera stream or the phone page to the public
+  internet. Never commit stream URLs, passwords, `.env` files, recordings or model weights.
+- **Phone page (`--web`):** sends cue text and a status line only, never video or images. It listens on one address:
+  this laptop only by default, or the laptop's hotspot IP when given with `--web-host`. It refuses 0.0.0.0 and
+  public addresses. Anyone on the same hotspot who opens the page can read the cues, so keep the hotspot to the
+  team. It shows the "not a navigation aid" line and says clearly when cues are not coming through.
 - **Recordings for tests:** only with the consent of everyone in frame, only when needed, kept locally, deleted after
   the hackathon.
 

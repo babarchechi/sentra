@@ -1,0 +1,112 @@
+/* Sentra Guide phone page: large, high-contrast, works at phone width, no external fonts or images. */
+:root {
+  --bg: #000;
+  --fg: #fff;
+  --muted: #c8c8c8;
+  --accent: #ffd60a;   /* yellow on black: ~15:1 contrast */
+  --ok: #4ade80;
+  --bad: #ff6b6b;
+  --line: #3a3a3a;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 18px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+main {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+}
+
+h1 { margin: 0; font-size: 1.5rem; }
+h2 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; color: var(--muted); }
+
+.disclaimer { margin: 0.25rem 0 1rem; color: var(--muted); font-size: 0.95rem; }
+
+.connection {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  border: 2px solid currentColor;
+  font-weight: 700;
+}
+.connection--ok { color: var(--ok); }
+.connection--wait { color: var(--accent); }
+.connection--bad { color: var(--bad); background: #2a0000; }
+
+button { font: inherit; cursor: pointer; }
+button:focus-visible { outline: 4px solid var(--accent); outline-offset: 3px; }
+
+.big-button {
+  display: block;
+  width: 100%;
+  min-height: 4.5rem;
+  margin: 0 0 1rem;
+  border: 0;
+  border-radius: 1rem;
+  background: var(--accent);
+  color: #000;
+  font-size: 1.5rem;
+  font-weight: 800;
+}
+
+.toggle {
+  min-height: 3.25rem;
+  padding: 0 1.25rem;
+  border-radius: 0.75rem;
+  border: 2px solid var(--fg);
+  background: transparent;
+  color: var(--fg);
+  font-weight: 700;
+}
+.toggle[aria-pressed="false"] { border-style: dashed; color: var(--muted); }
+
+.warning { color: var(--bad); font-weight: 700; }
+
+.cue {
+  margin: 0 0 1rem;
+  padding: 1.25rem 1rem;
+  border: 3px solid var(--line);
+  border-radius: 1rem;
+}
+.cue--fresh { border-color: var(--accent); }
+.cue--high { border-color: var(--bad); }
+.cue__text {
+  margin: 0;
+  font-size: clamp(2rem, 11vw, 3.5rem);
+  font-weight: 800;
+  line-height: 1.15;
+  color: var(--accent);
+  overflow-wrap: anywhere;
+}
+.cue__age { margin: 0.5rem 0 0; color: var(--muted); min-height: 1.4em; }
+
+.controls { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+
+.laptop { color: var(--muted); font-size: 0.95rem; }
+
+.recent { margin: 0; padding-left: 1.5rem; }
+.recent li { padding: 0.35rem 0; border-bottom: 1px solid var(--line); }
+.recent time { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 0.5rem; }
+.recent .earlier { color: var(--muted); }
+
+footer { margin-top: 1.5rem; color: var(--muted); font-size: 0.85rem; }
+
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+[hidden] { display: none !important; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .cue { transition: border-color 0.3s; }
+}
