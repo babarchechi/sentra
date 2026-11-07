@@ -169,6 +169,12 @@ class AlertPolicy:
         self._last_any = now_frame
         return (alert,)
 
+    def reset(self) -> None:
+        """Forget recent frames and cooldowns, e.g. after switching cameras: the new view starts fresh."""
+        self._history.clear()
+        self._last_said.clear()
+        self._last_any = float("-inf")
+
     def _seen_count(self, key: GroupKey) -> int:
         return sum(key in keys for keys in self._history)
 

@@ -8,6 +8,10 @@ Run from the repo root (docs/SETUP_WINDOWS.md has phone instructions):
     python src/guide.py --source http://<phone-ip>:8080/video        Android (IP Webcam)
     python src/guide.py --source my_clip.mp4 --no-view --voice print consented recording, no window
 
+In the window, switch cameras with the "Camera:" dropdown (or press c). It lists every camera Windows can see,
+updated while it's open; phone streams can't be discovered, so list them with --extra-source:
+    python src/guide.py --source 0 --extra-source http://<iphone-ip>:4747/video --extra-source http://<android-ip>:8080/video
+
 The fall-detection prototype is unchanged: python src/main.py
 """
 from __future__ import annotations
@@ -17,6 +21,7 @@ import logging
 
 from sentra.capture import FrameSource, parse_source
 from sentra.guide.alerts import AlertConfig, AlertPolicy
+from sentra.guide.cameras import CameraCatalog, is_stream
 from sentra.guide.detector import DEFAULT_DETECT_MODEL, ObjectDetector
 from sentra.guide.pipeline import GuideControls, GuidePipeline
 from sentra.guide.spatial import SpatialEstimator
@@ -32,6 +37,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--source", default="0",
                         help="Webcam index (0), phone stream URL, or path to a consented local video file")
+    parser.add_argument("--extra-source", action="append", default=[], metavar="URL",
+                        help="Another phone stream URL to offer in the camera dropdown (repeatable)")
     parser.add_argument("--rotate", type=int, choices=(0, 90, 180, 270), default=0,
                         help="Rotate frames clockwise so the image is upright (phones in portrait: 90 or 270)")
     parser.add_argument("--model", default=DEFAULT_DETECT_MODEL, help="Detection weights (default yolo26n.pt)")
@@ -86,8 +93,17 @@ def main() -> None:
     except (ValueError, FileNotFoundError) as exc:
         raise SystemExit(str(exc)) from None
 
+    first = parse_source(args.source)
+    streams = [s for s in [args.source, *args.extra_source] if is_stream(s)]
+    cameras = None if args.no_view else CameraCatalog(streams)
+    if cameras is not None:
+        cameras.refresh(force=True)  # list the connected cameras in the background while the camera opens
+
+    def open_source(spec: int | str) -> FrameSource:
+        return FrameSource(spec, rotate=args.rotate, open_timeout_s=10.0)
+
     try:
-        source = FrameSource(parse_source(args.source), rotate=args.rotate)
+        source = FrameSource(first, rotate=args.rotate)
     except RuntimeError as exc:
         raise SystemExit(str(exc)) from None
     rotation = f", rotated {args.rotate} degrees" if args.rotate else ""
@@ -95,18 +111,19 @@ def main() -> None:
 
     policy = build_policy(args)
     spatial = SpatialEstimator()
-    controls = GuideControls(muted=args.muted, privacy=args.privacy)
+    controls = GuideControls(muted=args.muted, privacy=args.privacy, camera_source=first,
+                             camera_label=cameras.label_for(first) if cameras else source.description)
     speaker = build_speaker(args.voice)
     if args.no_view:
         sink = HeadlessSink(args.max_seconds)
     else:
-        sink = GuideView(controls, policy, spatial.config, voice_name=args.voice)
+        sink = GuideView(controls, policy, spatial.config, voice_name=args.voice, cameras=cameras)
         if args.max_seconds is not None:
             log.warning("--max-seconds only applies with --no-view; press q to quit the window.")
-        log.info("Click the video window, then: m mute, p privacy, q quit.")
+        log.info("Click the video window, then: c cameras, m mute, p privacy, q quit.")
 
     pipeline = GuidePipeline(source, detector, sink, speaker=speaker, spatial=spatial, policy=policy,
-                             controls=controls, label=args.label)
+                             controls=controls, label=args.label, open_source=open_source)
     try:
         pipeline.run()
     except KeyboardInterrupt:
@@ -114,6 +131,8 @@ def main() -> None:
     finally:
         sink.close()
         source.close()
+        if pipeline.source is not source:
+            pipeline.source.close()  # the camera picked in the dropdown
         if speaker is not None:
             speaker.close()
             if speaker.failed:
