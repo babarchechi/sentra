@@ -132,7 +132,7 @@ See [DEPTH_OPTIONS.md](DEPTH_OPTIONS.md). Nothing about depth is needed for the 
 | `python src/guide.py --source my_clip.mp4 --no-view --voice print` (a **consented** recording, kept out of git) | Tested 2026-11-06 on a synthetic clip made from Ultralytics' sample image: plays at the clip's frame rate, then stops |
 | `python src/guide.py --source 1` (USB camera) | Not tested (no USB camera yet) |
 | `python src/main.py --source 0` (fall detection, archived) | Tested 2026-11-06, unchanged |
-| Local web server / phone page | Not built yet (Swechha, TEAM_PLAN.md task 3). Sentra Guide opens no ports today |
+| `python src/guide.py --source 0 --voice off --web --web-host <laptop IP on the phone hotspot>`, then open `http://<that IP>:8765/` on a phone and tap **Tap to turn on sound** | Phone speech page. Tested 2026-11-07 on an iPhone in Safari over its own hotspot: cues spoken (VALIDATION.md, Section 3). If the phone can't load the page, allow Python through Windows Firewall for Private networks. Run `ipconfig` to find the laptop's hotspot IP (iPhone hotspot: `172.20.10.x`). Without `--web` Sentra Guide opens no ports |
 
 ## 8. Troubleshooting
 

@@ -81,9 +81,12 @@ class GuideView:
 
     def close(self) -> None:
         if self._window_open:
-            cv2.destroyWindow(WINDOW_TITLE)
-            cv2.waitKey(1)
             self._window_open = False
+            try:
+                cv2.destroyWindow(WINDOW_TITLE)
+                cv2.waitKey(1)
+            except cv2.error:
+                pass  # already closed with the window's X button: nothing left to destroy
 
     # Keys --------------------------------------------------------------------------------------------------
 

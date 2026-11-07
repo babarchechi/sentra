@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#000000">
+  <title>Sentra Guide cues</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Sentra Guide</h1>
+      <p class="disclaimer">Experimental. Not a navigation aid. No cue does not mean the way is clear.</p>
+    </header>
+
+    <p id="connection" class="connection connection--wait" role="status">Connecting to the laptop…</p>
+
+    <button id="enable" class="big-button" type="button">Tap to turn on sound</button>
+    <p id="no-speech" class="warning" hidden>This browser can't speak. Cues are shown as text only.</p>
+
+    <section class="cue" aria-labelledby="cue-heading">
+      <h2 id="cue-heading" class="visually-hidden">Latest cue</h2>
+      <p id="cue" class="cue__text" aria-live="polite" aria-atomic="true">Waiting for the first cue…</p>
+      <p id="cue-age" class="cue__age"></p>
+    </section>
+
+    <div class="controls">
+      <button id="voice" class="toggle" type="button" aria-pressed="true" hidden>Voice: on</button>
+    </div>
+
+    <p id="laptop" class="laptop" role="status"></p>
+
+    <section aria-labelledby="recent-heading">
+      <h2 id="recent-heading">Recent cues</h2>
+      <ol id="recent" class="recent"></ol>
+    </section>
+
+    <footer>
+      <p>Only cue text reaches this page. No video or images are sent. Keep this page open with the screen on.</p>
+    </footer>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
