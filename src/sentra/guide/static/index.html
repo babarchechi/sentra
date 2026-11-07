@@ -18,8 +18,13 @@
     <p id="connection" class="connection connection--wait" role="status">Connecting to the laptop…</p>
 
     <button id="enable" class="big-button" type="button">Turn sound on</button>
-    <button id="voice" class="toggle" type="button" aria-pressed="true" hidden>Voice: on</button>
+    <div class="controls">
+      <button id="voice" class="toggle" type="button" aria-pressed="true" hidden>Voice: on</button>
+      <button id="vibrate" class="toggle" type="button" aria-pressed="true" hidden>Vibration: on</button>
+    </div>
     <p id="no-speech" class="warning" hidden>This browser can't speak. Cues are shown as text only.</p>
+    <p id="no-vibrate" class="note" hidden>This phone can't vibrate from a web page (iPhones can't). Cautions are
+      spoken and shown in red.</p>
 
     <section class="cue" aria-labelledby="cue-heading">
       <h2 id="cue-heading" class="cue__label">Latest cue</h2>

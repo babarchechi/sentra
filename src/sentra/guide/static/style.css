@@ -55,7 +55,15 @@ h1 { font-size: 1.5rem; font-weight: 700; }
   background: var(--accent);
 }
 .connection--ok::before { background: var(--ok); }
-.connection--bad { color: var(--bad); font-weight: 700; }
+.connection--bad {   /* the one state that must stand out most */
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 2px solid var(--bad);
+  border-radius: 10px;
+  background: #2a0000;
+  color: var(--bad);
+  font-weight: 700;
+}
 .connection--bad::before { background: var(--bad); }
 
 /* ---- Buttons --------------------------------------------------------------------------------------------- */
@@ -76,15 +84,30 @@ button:focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }
 .toggle { border: 2px solid var(--fg); background: transparent; color: var(--fg); }
 .toggle[aria-pressed="false"] { border-style: dashed; color: var(--muted); }
 
+/* Voice and Vibration side by side, in the spot "Turn sound on" leaves after the first tap */
+.controls { display: flex; gap: 10px; }
+.controls .toggle { flex: 1; min-width: 0; font-size: 1.05rem; }
+
 .warning { margin-top: 10px; color: var(--bad); font-weight: 700; }
+.note { margin-top: 10px; color: var(--muted); font-size: 0.9rem; }
 
 /* ---- Latest cue ------------------------------------------------------------------------------------------ */
 
 .cue {
   margin-top: 22px;
-  padding: 2px 0 2px 16px;
+  padding: 8px 14px 8px 16px;
   border-left: 4px solid var(--accent);
+  border-radius: 0 8px 8px 0;
 }
+/* High severity (big and in the middle): the bar and label turn red for a few seconds */
+.cue--high { border-left-color: var(--bad); }
+.cue--high .cue__label { color: var(--bad); }
+/* A caution ("Caution, chair ahead."): white on dark red, ~13:1 contrast, so it stands out from ordinary cues */
+.cue--caution { border-left-color: var(--bad); background: #5c0000; }
+.cue--caution .cue__label,
+.cue--caution .cue__text { color: var(--fg); }
+.cue--caution .cue__age { color: #e0b4b4; }
+
 .cue__label {
   margin: 0;
   color: var(--accent);

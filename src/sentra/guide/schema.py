@@ -117,6 +117,7 @@ class GuideAlert:
     depth_confidence: float = 0.0
     latency_ms: float = 0.0       # frame capture -> alert decided (speech starts after this)
     source: str = ""
+    caution: bool = False         # a danger warning ("Caution, chair ahead."): spoken first; the phone vibrates
     schema: str = SCHEMA_VERSION
     type: str = "alert"
 

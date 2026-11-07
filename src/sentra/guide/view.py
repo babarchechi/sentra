@@ -50,6 +50,9 @@ RED, ORANGE, GREEN, GREY = (40, 40, 230), (0, 150, 255), (60, 190, 60), (150, 15
 WHITE, BLACK, YELLOW = (255, 255, 255), (0, 0, 0), (0, 220, 255)
 DARK, HOVER, ACCENT, TOOLBAR_BG = (45, 45, 45), (85, 85, 85), (60, 140, 60), (25, 25, 25)
 PANEL_BG, CARD_BG, RULE, DIM = (22, 22, 22), (38, 38, 38), (70, 70, 70), (110, 110, 110)
+CAUTION_RED = (40, 40, 255)  # BGR
+CAUTION_BG = (20, 20, 110)   # the last-cue card behind a caution
+CAUTION_FLASH_S = 1.5        # how long the video keeps a red frame after "Caution, ..."
 SEVERITY_COLORS = {Severity.HIGH: RED, Severity.MEDIUM: ORANGE, Severity.LOW: GREEN}
 PLACE = {Region.LEFT: "left", Region.CENTER: "ahead", Region.RIGHT: "right"}
 
@@ -344,11 +347,18 @@ class GuideView:
         self._draw_top_bar(canvas, update)
         self._draw_panel(canvas, vw, top, top + body_h, update)
         self._draw_bottom_bar(canvas, top + body_h)
+        if self.caution_showing():
+            cv2.rectangle(canvas, (0, top), (vw - 1, top + vh - 1), CAUTION_RED, 6)  # red frame around the video
         self._last_base = canvas.copy()
         self._draw_toolbar(canvas)
         if self.menu is not None:
             self.menu.draw(canvas)
         return canvas
+
+    def caution_showing(self) -> bool:
+        """True for CAUTION_FLASH_S after a caution: the video gets a red frame."""
+        return (self._last_alert is not None and self._last_alert.caution
+                and time.perf_counter() - self._last_alert_at < CAUTION_FLASH_S)
 
     # Video area --------------------------------------------------------------------------------------------
 
@@ -465,8 +475,11 @@ class GuideView:
                 y += 20
 
     def _panel_last_cue(self, canvas: np.ndarray, x: int, y: int, w: int) -> int:
-        y = self._section(canvas, x, y, w, "LAST CUE")
-        cv2.rectangle(canvas, (x, y), (x + w, y + 96), CARD_BG, -1)
+        caution = self._last_alert is not None and self._last_alert.caution
+        y = self._section(canvas, x, y, w, "LAST CUE: CAUTION" if caution else "LAST CUE")
+        cv2.rectangle(canvas, (x, y), (x + w, y + 96), CAUTION_BG if caution else CARD_BG, -1)
+        if caution:
+            cv2.rectangle(canvas, (x, y), (x + w, y + 96), CAUTION_RED, 2)
         if self._last_alert is None:
             _put(canvas, "Nothing announced yet", (x + 12, y + 34), 0.6, DIM, 1)
             region = None
@@ -474,7 +487,7 @@ class GuideView:
             alert = self._last_alert
             lines = _wrap(f'"{alert.text}"', w - 24, 0.75, 2)[:2]
             for i, line in enumerate(lines):
-                _put(canvas, line, (x + 12, y + 30 + 26 * i), 0.75, YELLOW, 2)
+                _put(canvas, line, (x + 12, y + 30 + 26 * i), 0.75, WHITE if caution else YELLOW, 2)
             ago = time.perf_counter() - self._last_alert_at
             muted = "  muted, not spoken" if self.controls.muted else ""
             _put(canvas, f"{ago:.0f} s ago  |  score {alert.confidence:.0%}{muted}", (x + 12, y + 84), 0.42, GREY, 1)
