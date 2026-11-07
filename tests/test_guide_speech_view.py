@@ -12,6 +12,16 @@ from sentra.guide.view import GuideView, HeadlessSink
 from guide_helpers import CHAIR_AHEAD, FakeModel, FakeSource
 
 
+def test_view_close_after_window_closed_with_x_does_not_crash():
+    """Phone test 2026-11-07: closing the window with its X, then quitting, raised cv2.error in close()."""
+    from sentra.guide.pipeline import GuideControls
+
+    view = GuideView(GuideControls(), AlertPolicy())
+    view._window_open = True  # as if shown, then closed by the user: no window exists any more
+    view.close()
+    view.close()  # and closing twice is fine
+
+
 # Speech ------------------------------------------------------------------------------------------------
 
 class SlowBackend:

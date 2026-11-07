@@ -7,6 +7,8 @@ Run from the repo root (docs/SETUP_WINDOWS.md has phone instructions):
     python src/guide.py --source http://<phone-ip>:4747/video        iPhone (DroidCam) on the same network
     python src/guide.py --source http://<phone-ip>:8080/video        Android (IP Webcam)
     python src/guide.py --source my_clip.mp4 --no-view --voice print consented recording, no window
+    python src/guide.py --source 0 --web --web-host 172.20.10.2      also speak cues on a phone browser
+                                                                     (open http://172.20.10.2:8765/ on the phone)
 
 In the window, switch cameras with the "Camera:" dropdown (or press c). It lists every camera Windows can see,
 updated while it's open; phone streams can't be discovered, so list them with --extra-source:
@@ -27,6 +29,7 @@ from sentra.guide.pipeline import GuideControls, GuidePipeline
 from sentra.guide.spatial import SpatialEstimator
 from sentra.guide.speech import PrintSpeech, Speaker, WindowsSpeech
 from sentra.guide.view import GuideView, HeadlessSink
+from sentra.guide.web import DEFAULT_HOST, DEFAULT_PORT, TeeSink, WebSpeechPage, hotspot_hint
 
 log = logging.getLogger("sentra")
 
@@ -61,6 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-seconds", type=float, default=None, help="Stop after this many seconds")
     parser.add_argument("--label", default=None,
                         help="Tag for the event-log filename, e.g. a test-scene name from docs/VALIDATION.md")
+    parser.add_argument("--web", action="store_true",
+                        help="Serve the phone speech page: a phone browser speaks the cues (alert text only, no video)")
+    parser.add_argument("--web-host", default=DEFAULT_HOST,
+                        help="Address the page listens on: this laptop's IP on the phone hotspot, e.g. 172.20.10.2 "
+                             "(default 127.0.0.1 = this laptop only; 0.0.0.0 is refused)")
+    parser.add_argument("--web-port", type=int, default=DEFAULT_PORT, help=f"Port for --web (default {DEFAULT_PORT})")
     return parser
 
 
@@ -81,6 +90,24 @@ def build_speaker(choice: str) -> Speaker | None:
     return Speaker(WindowsSpeech() if choice == "windows" else PrintSpeech())
 
 
+def start_web_page(args: argparse.Namespace, controls: GuideControls) -> WebSpeechPage:
+    try:
+        page = WebSpeechPage(controls, host=args.web_host, port=args.web_port)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+    except OSError as exc:
+        raise SystemExit(f"Can't start the phone page on {args.web_host}:{args.web_port} ({exc}). "
+                         "Is another copy running, or is that address not on this laptop? Try another --web-port, "
+                         "or check the address with ipconfig.") from None
+    log.info("Phone speech page: open %s on the phone, then tap 'Tap to turn on sound'. Sends cue text only.",
+             page.url)
+    if args.web_host == DEFAULT_HOST:
+        log.info("127.0.0.1 is reachable from this laptop only. %s", hotspot_hint())
+    if args.voice == "windows":
+        log.info("Tip: add --voice off so cues aren't spoken twice (laptop and phone).")
+    return page
+
+
 def main() -> None:
     args = build_parser().parse_args()
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
@@ -94,6 +121,9 @@ def main() -> None:
         raise SystemExit(str(exc)) from None
 
     first = parse_source(args.source)
+    controls = GuideControls(muted=args.muted, privacy=args.privacy, camera_source=first)
+    page = start_web_page(args, controls) if args.web else None  # before the camera, so a busy port fails fast
+
     streams = [s for s in [args.source, *args.extra_source] if is_stream(s)]
     cameras = None if args.no_view else CameraCatalog(streams)
     if cameras is not None:
@@ -105,14 +135,15 @@ def main() -> None:
     try:
         source = FrameSource(first, rotate=args.rotate)
     except RuntimeError as exc:
+        if page is not None:
+            page.close()
         raise SystemExit(str(exc)) from None
+    controls.camera_label = cameras.label_for(first) if cameras else source.description
     rotation = f", rotated {args.rotate} degrees" if args.rotate else ""
     log.info("Camera: %s%s. Experimental: not a navigation aid.", source.description, rotation)
 
     policy = build_policy(args)
     spatial = SpatialEstimator()
-    controls = GuideControls(muted=args.muted, privacy=args.privacy, camera_source=first,
-                             camera_label=cameras.label_for(first) if cameras else source.description)
     speaker = build_speaker(args.voice)
     if args.no_view:
         sink = HeadlessSink(args.max_seconds)
@@ -121,6 +152,8 @@ def main() -> None:
         if args.max_seconds is not None:
             log.warning("--max-seconds only applies with --no-view; press q to quit the window.")
         log.info("Click the video window, then: c cameras, m mute, p privacy, q quit.")
+    if page is not None:
+        sink = TeeSink(sink, page)
 
     pipeline = GuidePipeline(source, detector, sink, speaker=speaker, spatial=spatial, policy=policy,
                              controls=controls, label=args.label, open_source=open_source)

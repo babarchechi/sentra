@@ -204,7 +204,7 @@ class GuideView:
                 cv2.destroyWindow(WINDOW_TITLE)
                 cv2.waitKey(1)
             except cv2.error:
-                pass  # already closed with the window's X button
+                pass  # already closed with the window's X button: nothing left to destroy
 
     def _show(self, canvas: np.ndarray) -> None:
         if not self.show_window:

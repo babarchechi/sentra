@@ -22,7 +22,7 @@ The project started as **Sentra**, a fall-detection prototype. That app still wo
 | Consented local video files as input (repeatable tests) | ✅ |
 | iPhone stream (DroidCam) | ✅ Verified with Sentra Guide 2026-11-06 (portrait + `--rotate 90`, campus Wi-Fi): cues and directions correct, 24–29 fps |
 | Android stream (IP Webcam) | ⏳ Not tested yet |
-| Speech on the phone (browser page) | ❌ Planned |
+| Speech on the phone (browser page, `--web`) | ✅ Verified 2026-11-07 on an iPhone (Safari, iPhone hotspot): cues spoken on the phone. Delay not yet timed; Android not tested |
 | Depth: Depth Anything V2 (estimated) / Record3D iPhone LiDAR | ❌ Optional experiments, not started ([docs/DEPTH_OPTIONS.md](docs/DEPTH_OPTIONS.md)) |
 
 ## Quick start (Windows)
@@ -79,6 +79,7 @@ Details and the event schema: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | [docs/SETUP_WINDOWS.md](docs/SETUP_WINDOWS.md) | Tested setup and run commands, iPhone/Android steps, troubleshooting |
 | [docs/DEPTH_OPTIONS.md](docs/DEPTH_OPTIONS.md) | Camera-only vs. Depth Anything V2 vs. Record3D, with a decision rule |
 | [docs/VALIDATION.md](docs/VALIDATION.md) | Metrics, measured results so far, test scenes, user-feedback log |
+| [docs/OBSTACLE_DETECTION.md](docs/OBSTACLE_DETECTION.md) | Warning about things YOLO can't name: feasibility results, build plan, test protocol |
 | [docs/SAFETY_AND_PRIVACY.md](docs/SAFETY_AND_PRIVACY.md) | Claims we make and don't make, testing rules, privacy |
 | [docs/PHASE1_PLAN.md](docs/PHASE1_PLAN.md), [docs/evaluation.md](docs/evaluation.md) | Archived fall-detection plan and results |
 
