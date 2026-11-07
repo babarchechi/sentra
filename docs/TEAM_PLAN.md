@@ -88,6 +88,12 @@ Priorities: **P0** = needed for the demo, **P1** = makes it clearly better, **P2
 **Stretch**
 6. **P2** `record3d.py` `DepthProvider` using `box_depth()` with `validated=False`; tape-measure tests with Swechha
    (VALIDATION.md, Section 4); flip to validated only if the errors are acceptable.
+7. **P2, backlog (noted 2026-11-06): faster reconnect.** In the simulated outage test, each failed attempt to reopen
+   an unreachable stream took ~14 s, so recovery after a 10 s cut took 9 s and could take up to ~20 s (VALIDATION.md,
+   Section 3). Unconfirmed guess at the cause: OpenCV tries several backends in turn for a URL. Idea to try in
+   `capture.py`: open stream URLs with `cv2.CAP_FFMPEG` only and set `cv2.CAP_PROP_OPEN_TIMEOUT_MSEC` to ~3000.
+   *Accept:* same relay test, reconnect within ~5 s of the stream returning, all capture tests still pass. Not needed
+   for the demo; do it only if there's time.
 
 **Fallback:** if the phone stream fails during the demo, use the laptop webcam (verified). If Record3D is blocked,
 present camera-only plus the honest blocker.
