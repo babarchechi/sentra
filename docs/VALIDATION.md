@@ -34,7 +34,37 @@ Laptop: Windows 11 Home, CPU only. Model `yolo26n.pt`, `--imgsz 640`, ByteTrack 
 | 2026-11-06 | iPhone 14 Pro Max, DroidCam over campus eduroam, landscape image but phone in portrait (sideways) | Babar | 1490 / 52.0 | 28.7 | 27 | 39 | 15 | 0 | Stream fine but the picture was sideways, so directions weren't meaningful: rerun with `--rotate 90` |
 | 2026-11-06 | iPhone 14 Pro Max, DroidCam over eduroam, portrait, `--rotate 90` | Babar | 1323 / 56.1 | 23.6 | 26.8 | 42.9 | 15 | 0 | ✅ Upright; Babar confirmed cues and directions. Chair announced ahead, left and right; people incl. "2 people ahead/left/right"; "Possible obstacle ahead." ×1; "TV to your left." ×1 |
 | | Android (IP Webcam) | Iesa | | | | | | | |
-| | `src/guide_bench.py` at 640 / 480 / 320 | Iesa | | | | | | | |
+| 2026-11-06 | `src/guide_bench.py` at 640 / 480 / 320, synthetic 30 fps `bus.jpg` clip, **laptop on battery** | Iesa | 200 per setting | 15–16 (640), 19–21 (480), 29–30 (320, clip-limited) | 61–65 (640), 48–51 (480), 33–35 (320) | 78–81 (640), 65–71 (480), 42–52 (320) | n/a | 0 | Full table and notes in Section 2.1. Plugged-in run still to do |
+
+### 2.1 Benchmark: model size and tracking (`src/guide_bench.py`)
+
+2026-11-06, Iesa's laptop: Windows 11 Home, Intel64 Family 6 Model 189, CPU only, Python 3.12.10, **on battery**
+(Balanced power plan). Source: a synthetic 40 s, 30 fps clip made from Ultralytics' `bus.jpg` (810 × 1080, slowly
+panning; a bus and 4 people), so fps can't go above 30. Each row: 20 warm-up frames, then 200 measured frames through
+the same loop as `src/guide.py` (no voice, no window).
+
+Command: `python src/guide_bench.py --source bus_30fps_40s.mp4`
+
+| imgsz | Tracking | Frames / s | fps | Model ms median / p90 | Capture→decision ms median / p90 | Objects / frame | Stale |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 640 | on | 200 / 13.28 | 15 | 64.7 / 75.9 | 81 / 96.8 | 4.7 | 0 |
+| 640 | off | 200 / 12.37 | 16.1 | 61.4 / 65.7 | 77.8 / 91.5 | 4.8 | 0 |
+| 480 | on | 200 / 10.42 | 19.1 | 51 / 57.9 | 70.5 / 85.5 | 4.5 | 0 |
+| 480 | off | 200 / 9.69 | 20.5 | 48.2 / 51.3 | 65 / 83.9 | 4.7 | 0 |
+| 320 | on | 200 / 6.98 | 28.5 | 34.5 / 38 | 51.9 / 64 | 3.8 | 0 |
+| 320 | off | 200 / 6.68 | 29.8 | 32.9 / 35.4 | 41.5 / 57.9 | 4 | 0 |
+
+What it shows:
+- **Model size is the main lever.** 320 is about twice as fast as 640 and keeps up with a 30 fps source. Tracking
+  costs only 1–3 ms per frame.
+- **Battery makes it slow and unpredictable.** Five minutes before this run, the same 640 setting measured 101 ms
+  median (and 102 ms on a 10 fps clip), against ~30 ms earlier the same day (power state not recorded) and Babar's
+  29 ms. **Plug the laptop in for the demo.** If it must run on battery, `--imgsz 320` is the safer choice.
+- **320 finds fewer objects** (3.8–4 per frame vs 4.7–4.8 at 640 on this clip): small or far things drop out. Check on
+  real scenes before making it the default.
+- No stale frames in any setting.
+
+Still to do: the same run plugged in, and on the Android stream (camera tests postponed).
 
 ## 3. Devices
 
