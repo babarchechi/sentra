@@ -53,12 +53,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--announce-conf", type=float, default=0.5,
                         help="Score needed to say an object's name (default 0.5)")
     parser.add_argument("--imgsz", type=int, default=640, help="Model input size; 480 or 320 is faster")
-    parser.add_argument("--no-track", action="store_true", help="Turn off ByteTrack (detections only)")
-    parser.add_argument("--no-person-check", action="store_true",
-                        help="Don't use the pose model to confirm people (faster, but the camera holder's hands and "
-                             "arms can be announced as 'person')")
+    parser.add_argument("--no-track", action="store_true",
+                        help="Turn off ByteTrack (detections only). With --person-check, the pose model then runs "
+                             "more often (see docs/VALIDATION.md, Section 2.1)")
+    parser.add_argument("--person-check", action="store_true",
+                        help="Experimental: confirm people with the pose model, so the camera holder's hands and arms "
+                             "aren't announced as 'person' (a large central one becomes 'Possible obstacle'). Needs "
+                             f"{DEFAULT_POSE_MODEL}. Nearly free with tracking; with --no-track it runs more often")
     parser.add_argument("--pose-model", default=DEFAULT_POSE_MODEL,
-                        help=f"Pose weights for the person check (default {DEFAULT_POSE_MODEL})")
+                        help=f"Pose weights for --person-check (default {DEFAULT_POSE_MODEL})")
     parser.add_argument("--all-labels", action="store_true",
                         help="Announce every class the model knows, not just the obstacle list")
     parser.add_argument("--repeat-after", type=float, default=10.0,
@@ -144,7 +147,7 @@ def main() -> None:
     logging.getLogger("sentra").setLevel(logging.INFO)
 
     detector = ObjectDetector(args.model, conf=args.conf, imgsz=args.imgsz, track=not args.no_track)
-    person_check = None if args.no_person_check else PersonCheck(args.pose_model, imgsz=args.imgsz)
+    person_check = PersonCheck(args.pose_model, imgsz=args.imgsz) if args.person_check else None
     log.info("Loading %s%s ...", args.model, "" if person_check is None else f" and {args.pose_model} (person check)")
     try:
         detector.warmup()

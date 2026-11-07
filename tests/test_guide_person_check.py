@@ -5,10 +5,11 @@ import torch
 from guide_helpers import FakeClock, FakeModel, FakeSource, RecordingSpeaker
 
 from sentra.events import KEYPOINT_NAMES
+from sentra.guide.alerts import AlertConfig, AlertPolicy
 from sentra.guide.detector import ObjectDetector
-from sentra.guide.person_check import PersonCheck, PersonCheckConfig, pose_bodies
+from sentra.guide.person_check import UNCONFIRMED_PERSON, PersonCheck, PersonCheckConfig, pose_bodies
 from sentra.guide.pipeline import GuidePipeline
-from sentra.guide.schema import Detection, DetectionFrame
+from sentra.guide.schema import Detection, DetectionFrame, Region, Severity, SpatialObject
 from sentra.guide.view import HeadlessSink
 
 IMAGE = np.zeros((480, 640, 3), np.uint8)
@@ -74,11 +75,14 @@ def labels(f):
 
 # Verdicts ----------------------------------------------------------------------------------------------
 
-def test_hands_and_arms_are_dropped_and_real_bodies_kept():
+def test_hands_and_arms_become_unconfirmed_and_real_bodies_stay_people():
     pose = FakePoseModel([(PERSON_BOX, FACE_AND_SHOULDERS), (HAND_BOX, HAND_ONLY)])
     check = PersonCheck(model=pose)
-    out = check.filter(IMAGE, frame(person(), person(HAND_BOX), chair()))
-    assert labels(out) == [("person", PERSON_BOX), ("chair", (10.0, 200.0, 120.0, 460.0))]
+    hand = Detection("person", 0, 0.8, HAND_BOX, 5)
+    out = check.filter(IMAGE, frame(person(), hand, chair()))
+    assert labels(out) == [("person", PERSON_BOX), (UNCONFIRMED_PERSON, HAND_BOX),
+                           ("chair", (10.0, 200.0, 120.0, 460.0))]
+    assert out.detections[1] == Detection(UNCONFIRMED_PERSON, 0, 0.8, HAND_BOX, 5)  # only the label changes
     assert check.rejected == 1 and check.checks == 1
 
 
@@ -88,11 +92,11 @@ def test_legs_alone_are_a_body_too():
     assert labels(check.filter(IMAGE, frame(person()))) == [("person", PERSON_BOX)]
 
 
-def test_a_person_box_with_no_matching_pose_is_dropped():
+def test_a_person_box_with_no_matching_pose_is_unconfirmed():
     far_away = (0.0, 0.0, 50.0, 50.0)
-    check = PersonCheck(model=FakePoseModel([(far_away, FACE_AND_SHOULDERS)]))
-    assert check.filter(IMAGE, frame(person())).detections == ()
-    assert PersonCheck(model=FakePoseModel([])).filter(IMAGE, frame(person())).detections == ()
+    for bodies in ([(far_away, FACE_AND_SHOULDERS)], []):
+        out = PersonCheck(model=FakePoseModel(bodies)).filter(IMAGE, frame(person()))
+        assert labels(out) == [(UNCONFIRMED_PERSON, PERSON_BOX)]
 
 
 def test_one_faint_keypoint_is_not_enough():
@@ -100,9 +104,9 @@ def test_one_faint_keypoint_is_not_enough():
     single = keypoints("nose")
     for kpts in (faint, single):
         check = PersonCheck(model=FakePoseModel([(PERSON_BOX, kpts)]))
-        assert check.filter(IMAGE, frame(person())).detections == ()
+        assert labels(check.filter(IMAGE, frame(person()))) == [(UNCONFIRMED_PERSON, PERSON_BOX)]
     lenient = PersonCheck(model=FakePoseModel([(PERSON_BOX, single)]), config=PersonCheckConfig(min_body_keypoints=1))
-    assert len(lenient.filter(IMAGE, frame(person())).detections) == 1
+    assert labels(lenient.filter(IMAGE, frame(person()))) == [("person", PERSON_BOX)]
 
 
 def test_frames_without_people_never_run_the_pose_model():
@@ -131,20 +135,43 @@ def test_a_rejected_track_is_rechecked_soon_so_someone_walking_in_hand_first_is_
     clock = FakeClock()
     pose = FakePoseModel([(PERSON_BOX, HAND_ONLY)])
     check = PersonCheck(model=pose, clock=clock)
-    assert check.filter(IMAGE, frame(person(track_id=3))).detections == ()
+    unconfirmed = [(UNCONFIRMED_PERSON, PERSON_BOX)]
+    assert labels(check.filter(IMAGE, frame(person(track_id=3)))) == unconfirmed
     clock.now = 0.3
-    assert check.filter(IMAGE, frame(person(track_id=3))).detections == () and pose.calls == 1  # cached
+    assert labels(check.filter(IMAGE, frame(person(track_id=3)))) == unconfirmed and pose.calls == 1  # cached
     pose.bodies = [(PERSON_BOX, FACE_AND_SHOULDERS)]  # the rest of them comes into view
     clock.now = 0.6
-    assert len(check.filter(IMAGE, frame(person(track_id=3))).detections) == 1 and pose.calls == 2
+    assert labels(check.filter(IMAGE, frame(person(track_id=3)))) == [("person", PERSON_BOX)] and pose.calls == 2
 
 
-def test_without_tracking_every_frame_with_a_person_is_checked():
+def test_without_tracking_a_box_in_nearly_the_same_place_reuses_the_verdict():
+    # babar on #12: with --no-track the pose model ran on every frame with a person and fps halved.
+    clock = FakeClock()
     pose = FakePoseModel([(PERSON_BOX, FACE_AND_SHOULDERS)])
-    check = PersonCheck(model=pose)
-    for _ in range(3):
-        check.filter(IMAGE, frame(person()))
+    check = PersonCheck(model=pose, clock=clock)
+    for i in range(10):  # someone standing still, untracked, 10 fps for 1 s
+        clock.now = i * 0.1
+        nudged = (PERSON_BOX[0] + i, PERSON_BOX[1], PERSON_BOX[2] + i, PERSON_BOX[3])
+        assert labels(check.filter(IMAGE, frame(person(nudged)))) == [("person", nudged)]
+    assert pose.calls == 1
+    check.filter(IMAGE, frame(person(HAND_BOX)))  # a different place: checked
+    assert pose.calls == 2
+    clock.now = 2.05  # the standing person's verdict is now too old: checked again
+    check.filter(IMAGE, frame(person()))
     assert pose.calls == 3
+
+
+def test_without_tracking_a_rejected_box_is_rechecked_after_half_a_second():
+    clock = FakeClock()
+    pose = FakePoseModel([(PERSON_BOX, HAND_ONLY)])
+    check = PersonCheck(model=pose, clock=clock)
+    check.filter(IMAGE, frame(person()))
+    clock.now = 0.4
+    check.filter(IMAGE, frame(person()))
+    assert pose.calls == 1
+    clock.now = 0.55
+    check.filter(IMAGE, frame(person()))
+    assert pose.calls == 2
 
 
 def test_reset_and_forgetting_old_tracks():
@@ -199,25 +226,90 @@ def test_real_people_in_sample_photos_are_kept():
     assert any(d.label == "bus" for d in kept.detections)
 
 
+@pytest.mark.skipif(not all(w.exists() for w in WEIGHTS), reason="model weights not downloaded yet")
+def test_a_real_person_too_close_to_see_a_body_still_gets_a_possible_obstacle():
+    # babar's case on #12: someone right in front of the camera, only chest to waist in view, filling the frame.
+    import cv2
+    from ultralytics.utils import ASSETS
+
+    from sentra.guide.spatial import SpatialEstimator
+
+    x1, y1, x2, y2 = 49, 398, 240, 902  # the left person in bus.jpg
+    h = y2 - y1
+    crop = cv2.imread(str(ASSETS / "bus.jpg"))[y1 + int(0.30 * h):y1 + int(0.55 * h), x1:x2]
+    crop = cv2.resize(crop, (640, int(640 * crop.shape[0] / crop.shape[1])))
+    detector, check = ObjectDetector(str(WEIGHTS[0]), track=False), PersonCheck(str(WEIGHTS[1]))
+    policy, said = AlertPolicy(clock=lambda: 0.0), []
+    for i in range(3):
+        f = check.filter(crop, detector.detect(crop, i + 1, 0.0))
+        said += [a.text for a in policy.update(SpatialEstimator().locate(f), f)]
+    assert [d.label for d in f.detections] == [UNCONFIRMED_PERSON]  # no body seen this close...
+    assert said == ["Possible obstacle ahead."]                     # ...but not silent
+
+
+# The alert policy and unconfirmed people -------------------------------------------------------------------
+
+def spatial(det, region, view_height, severity=Severity.MEDIUM):
+    return SpatialObject(det, region, 0.5, region is Region.CENTER, view_height, severity)
+
+
+def test_unconfirmed_people_are_never_named_even_with_all_labels():
+    for labels_setting in ({"labels": None}, {}):
+        policy = AlertPolicy(AlertConfig(**labels_setting))
+        side = spatial(Detection(UNCONFIRMED_PERSON, 0, 0.9, HAND_BOX), Region.RIGHT, 0.4)
+        assert not policy.is_confident(side) and policy.group([side]) == {}
+
+
+def test_a_large_central_unconfirmed_person_is_a_possible_obstacle_but_a_small_one_is_not():
+    policy = AlertPolicy()
+    big = spatial(Detection(UNCONFIRMED_PERSON, 0, 0.73, PERSON_BOX), Region.CENTER, 0.9, Severity.HIGH)
+    small = spatial(Detection(UNCONFIRMED_PERSON, 0, 0.73, (300.0, 400.0, 340.0, 440.0)), Region.CENTER, 0.08)
+    faint = spatial(Detection(UNCONFIRMED_PERSON, 0, 0.2, PERSON_BOX), Region.CENTER, 0.9)
+    assert list(policy.group([big])) == [("obstacle", Region.CENTER)]
+    assert policy.group([small]) == {} and policy.group([faint]) == {}
+
+
+def test_a_hand_in_front_of_a_confirmed_person_is_not_a_second_obstacle():
+    policy = AlertPolicy()
+    body = spatial(person(), Region.CENTER, 0.9, Severity.HIGH)
+    hand = spatial(Detection(UNCONFIRMED_PERSON, 0, 0.8, (220.0, 60.0, 430.0, 460.0)), Region.CENTER, 0.83)
+    assert list(policy.group([body, hand])) == [("person", Region.CENTER)]
+
+
 # In the pipeline -----------------------------------------------------------------------------------------
 
 PERSON_AHEAD = [(0, 0.85, 200, 40, 440, 470)]  # in the middle of a 640x480 frame
+HAND_RIGHT = [(0, 0.8, 500, 300, 630, 470)]    # a hand at the right edge (HAND_BOX)
 
 
-@pytest.mark.parametrize("body, said", [(HAND_ONLY, []), (FACE_AND_SHOULDERS, ["Person ahead."])])
-def test_pipeline_announces_only_confirmed_people(tmp_path, body, said):
+@pytest.mark.parametrize("rows, pose_box, body, said", [
+    (HAND_RIGHT, HAND_BOX, HAND_ONLY, []),                                  # the holder's hand: silent
+    (PERSON_AHEAD, PERSON_BOX, HAND_ONLY, ["Possible obstacle ahead."]),    # big, central, no body: not silent
+    (PERSON_AHEAD, PERSON_BOX, FACE_AND_SHOULDERS, ["Person ahead."]),      # a real person
+])
+def test_pipeline_names_only_confirmed_people(tmp_path, rows, pose_box, body, said):
     speaker = RecordingSpeaker()
-    check = PersonCheck(model=FakePoseModel([(PERSON_BOX, body)]))
-    pipeline = GuidePipeline(FakeSource(8), ObjectDetector(model=FakeModel(PERSON_AHEAD)), HeadlessSink(),
+    check = PersonCheck(model=FakePoseModel([(pose_box, body)]))
+    pipeline = GuidePipeline(FakeSource(8), ObjectDetector(model=FakeModel(rows)), HeadlessSink(),
                              speaker=speaker, output_dir=tmp_path, person_check=check)
     stats = pipeline.run()
     assert speaker.said == said
     summary = stats.as_dict()
     assert summary["person_checks"] >= 1 and summary["median_person_check_ms"] is not None
-    if not said:
-        assert summary["unconfirmed_people"] == 8 and "ignored 8 hand/arm/partial" in stats.summary()
+    if body is HAND_ONLY:
+        assert summary["unconfirmed_people"] == 8 and "found no body in 8 'person' boxes" in stats.summary()
     else:
         assert summary["unconfirmed_people"] == 0
+
+
+def test_the_reason_says_why_a_possible_obstacle_fired(tmp_path):
+    check = PersonCheck(model=FakePoseModel([(PERSON_BOX, HAND_ONLY)]))
+    sink = type("Keep", (HeadlessSink,), {"alerts": [],
+                                           "publish": lambda self, u: self.alerts.extend(u.alerts)})()
+    GuidePipeline(FakeSource(4), ObjectDetector(model=FakeModel(PERSON_AHEAD)), sink, output_dir=tmp_path,
+                  person_check=check).run()
+    (alert,) = sink.alerts
+    assert alert.text == "Possible obstacle ahead." and "no body seen" in alert.reason
 
 
 def test_pipeline_without_a_person_check_is_unchanged(tmp_path):

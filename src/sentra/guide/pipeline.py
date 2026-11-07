@@ -127,7 +127,7 @@ class RunStats:
     inference_ms: list[float] = field(default_factory=list)
     person_checks: int = 0         # pose-model runs by the person check
     person_check_ms: list[float] = field(default_factory=list)
-    unconfirmed_people: int = 0    # "person" detections dropped as hands/arms/partial bodies
+    unconfirmed_people: int = 0    # "person" detections with no body seen (relabelled "unconfirmed person")
 
     @property
     def fps(self) -> float:
@@ -161,7 +161,8 @@ class RunStats:
             check = d["median_person_check_ms"]
             text += (f"; person check ran on {d['person_checks']} frames"
                      + (f" ({check:.0f} ms median)" if check is not None else "")
-                     + f" and ignored {d['unconfirmed_people']} hand/arm/partial 'person' boxes")
+                     + f" and found no body in {d['unconfirmed_people']} 'person' boxes "
+                       "(hands/arms or too close: never named, at most 'Possible obstacle')")
         return text
 
 
@@ -181,7 +182,7 @@ class GuidePipeline:
         label: str | None = None,
         clock=time.perf_counter,
         open_source: Callable[[int | str], Any] | None = None,  # opens a camera for a switch; None = no switching
-        person_check: PersonCheck | None = None,  # drops "person" boxes that are only hands/arms; None = off
+        person_check: PersonCheck | None = None,  # relabels "person" boxes with no body (hands/arms); None = off
     ) -> None:
         self.source = source
         self.detector = detector
