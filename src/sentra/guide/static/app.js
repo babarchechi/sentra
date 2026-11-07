@@ -7,22 +7,29 @@ const MAX_WAIT_MS = 2000;   // a cue that waited longer than this to be spoken i
 const SILENT_MS = 4000;     // the laptop sends a status every second; this long without anything = disconnected
 const STUCK_SPEECH_MS = 6000; // some phones never fire "end"; don't let that silence every later cue
 const HISTORY = 5;
+const CAUTION_BUZZ = [300, 120, 300]; // vibration pattern for a caution ("Caution, chair ahead."), in ms
 
 const $ = (id) => document.getElementById(id);
 const els = {
   connection: $("connection"), enable: $("enable"), noSpeech: $("no-speech"), cue: $("cue"),
   cueAge: $("cue-age"), cueBox: document.querySelector(".cue"), voice: $("voice"), laptop: $("laptop"),
-  recent: $("recent"),
+  recent: $("recent"), vibrate: $("vibrate"), noVibrate: $("no-vibrate"),
 };
 
 const canSpeak = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+// Android browsers can vibrate from a web page; iPhones (Safari) can't, so there cautions are spoken and shown only.
+const canVibrate = "vibrate" in navigator;
 const state = {
   audioOn: false,        // set by the first tap (iOS won't speak before one)
+  tapped: false,         // the page was tapped once: browsers allow vibration only after that
   voiceOn: true,         // the Voice on/off toggle
-  laptopMuted: false,    // the laptop's m key mutes the page too
+  vibrateOn: true,       // the Vibration on/off toggle
+  laptopMuted: false,    // the laptop's m key mutes the page too (speech only: cautions still vibrate)
   lastMessageAt: 0,
   lastCueAt: 0,
-  pending: null,         // newest cue waiting to be spoken; a newer one replaces it
+  pending: null,         // newest cue waiting to be spoken; a newer one replaces it, but never a waiting caution
+  current: null,         // the utterance being spoken
+  currentCaution: false, // ...and whether it is a caution
   speakingSince: 0,
   wakeLock: null,
 };
@@ -88,16 +95,36 @@ function applyStatus(status) {
 
 function onAlert(alert) {
   if (!alert || typeof alert.text !== "string") return;
+  const caution = alert.caution === true; // a danger warning, e.g. "Caution, chair ahead."
   state.lastCueAt = Date.now();
   els.cue.textContent = alert.text;
   els.cueBox.classList.add("cue--fresh");
   els.cueBox.classList.toggle("cue--high", alert.severity === "high");
+  els.cueBox.classList.toggle("cue--caution", caution);
   updateCueAge();
   addRecent(alert, false);
-  if (shouldSpeak()) {
-    state.pending = { text: alert.text, receivedAt: Date.now() };
+  if (caution) {
+    buzz();
+    if (!shouldSpeak()) announceNow(); // screen readers: say it now rather than when they get to it
+  }
+  if (!shouldSpeak()) return;
+  if (caution) {
+    state.pending = { text: alert.text, receivedAt: Date.now(), caution: true };
+    if (state.speakingSince && !state.currentCaution) stopSpeaking(); // a caution cuts off an ordinary cue
+    speakNext();
+  } else if (!(state.pending && state.pending.caution)) {
+    state.pending = { text: alert.text, receivedAt: Date.now(), caution: false };
     speakNext();
   }
+}
+
+function buzz() {
+  if (canVibrate && state.vibrateOn && state.tapped) navigator.vibrate(CAUTION_BUZZ);
+}
+
+function announceNow() {
+  els.cue.setAttribute("aria-live", "assertive");
+  setTimeout(updateLiveRegion, 3000);
 }
 
 function addRecent(alert, earlier) {
@@ -116,7 +143,7 @@ function updateCueAge() {
   if (!state.lastCueAt) return;
   const seconds = Math.round((Date.now() - state.lastCueAt) / 1000);
   els.cueAge.textContent = seconds < 2 ? "just now" : `${seconds} s ago`;
-  if (seconds >= 3) els.cueBox.classList.remove("cue--fresh", "cue--high");
+  if (seconds >= 3) els.cueBox.classList.remove("cue--fresh", "cue--high", "cue--caution");
 }
 
 // ---- Speech ------------------------------------------------------------------------------------------------
@@ -133,13 +160,26 @@ function speakNext() {
   const utterance = new SpeechSynthesisUtterance(item.text);
   utterance.lang = "en-US";
   utterance.rate = 1.05;
-  utterance.onend = finishSpeaking;
-  utterance.onerror = finishSpeaking;
+  // Only the utterance still being spoken may finish: one cut off by a caution must not end the caution early.
+  const done = () => { if (state.current === utterance) finishSpeaking(); };
+  utterance.onend = done;
+  utterance.onerror = done;
+  state.current = utterance;
+  state.currentCaution = Boolean(item.caution);
   state.speakingSince = Date.now();
   window.speechSynthesis.speak(utterance);
 }
 
+function stopSpeaking() {
+  state.current = null;
+  state.currentCaution = false;
+  state.speakingSince = 0;
+  window.speechSynthesis.cancel();
+}
+
 function finishSpeaking() {
+  state.current = null;
+  state.currentCaution = false;
   state.speakingSince = 0;
   speakNext();
 }
@@ -161,6 +201,13 @@ async function keepScreenOn() {
 }
 
 els.enable.addEventListener("click", () => {
+  state.tapped = true;
+  if (canVibrate) {
+    navigator.vibrate(80); // a short buzz so the user knows cautions will be felt
+    els.vibrate.hidden = false;
+  } else {
+    els.noVibrate.hidden = false;
+  }
   if (!canSpeak) {
     els.noSpeech.hidden = false;
     els.enable.hidden = true;
@@ -184,9 +231,16 @@ els.voice.addEventListener("click", () => {
   els.voice.textContent = state.voiceOn ? "Voice: on" : "Voice: off";
   if (!state.voiceOn) {
     state.pending = null;
-    window.speechSynthesis.cancel();
+    stopSpeaking();
   }
   updateLiveRegion();
+});
+
+els.vibrate.addEventListener("click", () => {
+  state.vibrateOn = !state.vibrateOn;
+  els.vibrate.setAttribute("aria-pressed", String(state.vibrateOn));
+  els.vibrate.textContent = state.vibrateOn ? "Vibration: on" : "Vibration: off";
+  if (state.vibrateOn) navigator.vibrate(80);
 });
 
 document.addEventListener("visibilitychange", () => {

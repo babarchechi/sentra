@@ -8,6 +8,10 @@
   system, a fall-prevention device, or anything medical or safety-certified.
 - It **never** says "clear", "safe", or "go ahead". Not hearing a cue does not mean nothing is there (see
   VALIDATION.md, Section 7 for what the model can't detect).
+- It **does** warn about danger it can see: something big in the middle of the view (big or near) gets "Caution,
+  chair ahead.", said first and repeated while it stays, and the phone page vibrates (Android only). That is a
+  warning, not a guarantee: it only covers objects the model detects, and **there is no "safe to keep walking"
+  signal**. Decided 2026-11-07 (Iesa): danger only, worded "Caution", never "safe".
 - Distances are spoken only from a depth source that passed tape-measure testing. Today there is none, so no
   distances are spoken.
 

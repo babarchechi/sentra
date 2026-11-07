@@ -95,9 +95,15 @@ class FakeSource:
 class RecordingSpeaker:
     def __init__(self):
         self.said = []
+        self.urgent = []  # texts passed with urgent=True (cautions)
 
-    def say(self, text, created=None):
+    def say(self, text, created=None, urgent=False):
         self.said.append(text)
+        if urgent:
+            self.urgent.append(text)
 
 
-CHAIR_AHEAD = [(56, 0.85, 280, 100, 360, 400)]  # centre x = 320 of 640 -> ahead
+# centre x = 320 of 640 -> ahead; 200 of 480 px tall (0.42 of the frame): ahead but not "in the way", so it's a plain
+# "Chair ahead." (a box 0.5 of the frame tall or more in the middle gets "Caution, chair ahead.")
+CHAIR_AHEAD = [(56, 0.85, 280, 200, 360, 400)]
+CHAIR_IN_THE_WAY = [(56, 0.85, 240, 60, 400, 470)]  # 410 of 480 px tall, in the middle

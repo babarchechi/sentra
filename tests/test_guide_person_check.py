@@ -244,7 +244,7 @@ def test_a_real_person_too_close_to_see_a_body_still_gets_a_possible_obstacle():
         f = check.filter(crop, detector.detect(crop, i + 1, 0.0))
         said += [a.text for a in policy.update(SpatialEstimator().locate(f), f)]
     assert [d.label for d in f.detections] == [UNCONFIRMED_PERSON]  # no body seen this close...
-    assert said == ["Possible obstacle ahead."]                     # ...but not silent
+    assert said == ["Caution, possible obstacle ahead."]            # ...but not silent: it fills the frame
 
 
 # The alert policy and unconfirmed people -------------------------------------------------------------------
@@ -284,8 +284,8 @@ HAND_RIGHT = [(0, 0.8, 500, 300, 630, 470)]    # a hand at the right edge (HAND_
 
 @pytest.mark.parametrize("rows, pose_box, body, said", [
     (HAND_RIGHT, HAND_BOX, HAND_ONLY, []),                                  # the holder's hand: silent
-    (PERSON_AHEAD, PERSON_BOX, HAND_ONLY, ["Possible obstacle ahead."]),    # big, central, no body: not silent
-    (PERSON_AHEAD, PERSON_BOX, FACE_AND_SHOULDERS, ["Person ahead."]),      # a real person
+    (PERSON_AHEAD, PERSON_BOX, HAND_ONLY, ["Caution, possible obstacle ahead."]),  # big, central, no body
+    (PERSON_AHEAD, PERSON_BOX, FACE_AND_SHOULDERS, ["Caution, person ahead."]),  # a real person, in the way
 ])
 def test_pipeline_names_only_confirmed_people(tmp_path, rows, pose_box, body, said):
     speaker = RecordingSpeaker()
@@ -309,7 +309,7 @@ def test_the_reason_says_why_a_possible_obstacle_fired(tmp_path):
     GuidePipeline(FakeSource(4), ObjectDetector(model=FakeModel(PERSON_AHEAD)), sink, output_dir=tmp_path,
                   person_check=check).run()
     (alert,) = sink.alerts
-    assert alert.text == "Possible obstacle ahead." and "no body seen" in alert.reason
+    assert alert.text == "Caution, possible obstacle ahead." and "no body seen" in alert.reason
 
 
 def test_pipeline_without_a_person_check_is_unchanged(tmp_path):
