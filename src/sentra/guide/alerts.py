@@ -25,6 +25,7 @@ from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
+from sentra.guide.person_check import UNCONFIRMED_PERSON
 from sentra.guide.schema import (
     SEVERITY_RANK,
     DetectionFrame,
@@ -33,6 +34,11 @@ from sentra.guide.schema import (
     Severity,
     SpatialObject,
 )
+
+# Labels that are never spoken by name, not even with --all-labels. When large and central they can still be a
+# "Possible obstacle ahead.". UNCONFIRMED_PERSON: a "person" box the pose model found no body in (a hand, an arm,
+# or a real person seen too close), see sentra.guide.person_check.
+OBSTACLE_ONLY_LABELS: frozenset[str] = frozenset({UNCONFIRMED_PERSON})
 
 # COCO classes worth mentioning for someone moving through a room or along a path. Small tabletop things
 # (cups, phones, keyboards, ...) are left out on purpose: they would make the guide chatty.
@@ -129,6 +135,7 @@ class AlertPolicy:
         return (
             obj.detection.confidence >= cfg.announce_confidence
             and obj.view_height >= cfg.min_view_height
+            and obj.detection.label not in OBSTACLE_ONLY_LABELS
             and (cfg.labels is None or obj.detection.label in cfg.labels)
         )
 
@@ -145,7 +152,9 @@ class AlertPolicy:
             if (
                 id(obj) not in confident_ids
                 and obj.region is Region.CENTER
-                and cfg.uncertain_confidence <= obj.detection.confidence < cfg.announce_confidence
+                and cfg.uncertain_confidence <= obj.detection.confidence
+                and (obj.detection.confidence < cfg.announce_confidence
+                     or obj.detection.label in OBSTACLE_ONLY_LABELS)
                 and obj.view_height >= cfg.uncertain_min_view_height
                 # the same thing detected twice (e.g. chair 0.8 and couch 0.4) is not a second obstacle
                 and not any(_iou(obj.detection.box, c.detection.box) > 0.3 for c in confident)
@@ -237,7 +246,10 @@ class AlertPolicy:
         nearest = min(speakable, key=lambda d: d.meters) if speakable else None
         meters = round(nearest.meters, 1) if nearest is not None else None
         track_id = members[0].detection.track_id if len(members) == 1 else None
-        what = "uncertain detection" if name == OBSTACLE else name
+        what = name
+        if name == OBSTACLE:
+            unconfirmed = any(o.detection.label in OBSTACLE_ONLY_LABELS for o in members)
+            what = "person with no body seen (hand, arm or too close)" if unconfirmed else "uncertain detection"
         reason = (
             f"{what} (score {confidence:.2f}, {severity.value}) {region.value} "
             f"in {self._seen_count(key)}/{len(self._history)} recent frames; {why}"

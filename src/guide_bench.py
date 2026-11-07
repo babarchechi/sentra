@@ -35,6 +35,7 @@ import numpy as np
 
 from sentra.capture import FrameSource, describe_source, parse_source
 from sentra.guide.detector import DEFAULT_DETECT_MODEL, ObjectDetector
+from sentra.guide.person_check import PersonCheck
 from sentra.guide.pipeline import GuidePipeline
 from sentra.guide.schema import GuideUpdate
 
@@ -135,20 +136,29 @@ def run_config(
     frames: int,
     warmup: int,
     timeout_s: float = 120.0,
+    make_person_check: Callable[[int], Any] | None = None,
 ) -> BenchResult:
     """Run the guide loop for `warmup + frames` frames with one model size and tracking setting."""
     detector = make_detector(imgsz, track)
     detector.warmup()
+    person_check = make_person_check(imgsz) if make_person_check is not None else None
+    if person_check is not None:
+        person_check.warmup()
     source = open_source()
     sink = BenchSink(warmup + frames, timeout_s)
     try:
         with tempfile.TemporaryDirectory(prefix="sentra_bench_") as tmp:
-            GuidePipeline(source, detector, sink, output_dir=Path(tmp)).run()
+            pipeline = GuidePipeline(source, detector, sink, output_dir=Path(tmp), person_check=person_check)
+            pipeline.run()
     finally:
         close = getattr(source, "close", None)
         if close is not None:
             close()
     result = summarize(sink.samples, imgsz, track, warmup)
+    if person_check is not None:
+        stats = pipeline.stats.as_dict()
+        result.notes.append(f"person check on {stats.get('person_checks', 0)} frames "
+                            f"({stats.get('median_person_check_ms') or 0:g} ms median)")
     if sink.timed_out:
         result.notes.append(f"stopped after {timeout_s:.0f} s")
     elif len(sink.samples) < warmup + frames:
@@ -202,6 +212,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--frames", type=int, default=200, help="Measured frames per configuration (default 200)")
     parser.add_argument("--warmup", type=int, default=20, help="Frames skipped at the start of each configuration")
     parser.add_argument("--timeout", type=float, default=120.0, help="Give up on a configuration after this many s")
+    parser.add_argument("--person-check", action="store_true",
+                        help="Also run the pose-model person check, as src/guide.py does by default")
     return parser
 
 
@@ -230,7 +242,8 @@ def main(argv: Sequence[str] | None = None) -> list[BenchResult]:
     for imgsz in args.imgsz:
         for track in tracks:
             result = run_config(open_source, make_detector, imgsz, track,
-                                frames=args.frames, warmup=args.warmup, timeout_s=args.timeout)
+                                frames=args.frames, warmup=args.warmup, timeout_s=args.timeout,
+                                make_person_check=(lambda size: PersonCheck(imgsz=size)) if args.person_check else None)
             print(f"  imgsz {imgsz}, tracking {'on' if track else 'off'}: {result.fps:g} fps, model "
                   f"{result.model_ms_median} ms median, capture->decision {result.latency_ms_median} ms median",
                   flush=True)

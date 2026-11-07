@@ -130,7 +130,10 @@ present camera-only plus the honest blocker.
    No approach/collision claims on a handheld phone.
 
 **Fallback:** if tracking is unstable, run with `--no-track` (directions don't need IDs). If depth is too slow, leave
-`NoDepth`.
+`NoDepth`. With `--person-check` on (experimental, off by default), `--no-track` makes the pose model run more often:
+measured 2026-11-07 at 640 on the 30 fps `bus.jpg` clip, about 4% fps on the demo laptop plugged in (28.7 vs 30 fps)
+and about 15% on Iesa's laptop on battery (12.4 vs 14.6 fps, VALIDATION.md, Section 2.2). If it's too slow, drop
+`--person-check`.
 
 **Run/test:** `python -m pytest -q tests/test_guide_pipeline.py tests/test_guide_spatial.py` · `python src/guide_bench.py ...`
 
