@@ -57,14 +57,23 @@ def pose_frame_from_result(result: Any, timestamp: float) -> PoseFrame:
 
 
 class TransitionLog:
-    """Writes state changes, never images, to <output_dir>/transitions_<YYYYmmdd_HHMMSS>.csv."""
+    """Writes state changes, never images, to <output_dir>/transitions_<YYYYmmdd_HHMMSS>[_<label>].csv.
+
+    `label` tags the run, e.g. "s6" for evaluation scenario 6 (see sentra.evaluation).
+    """
 
     COLUMNS = ("timestamp", "wall_time", "track_id", "from_state", "to_state", "confidence", "reason")
 
-    def __init__(self, output_dir: Path = DEFAULT_OUTPUT_DIR) -> None:
+    def __init__(self, output_dir: Path = DEFAULT_OUTPUT_DIR, label: str | None = None) -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
-        self.path = output_dir / f"transitions_{datetime.now():%Y%m%d_%H%M%S}.csv"
-        self._file = self.path.open("w", newline="", encoding="utf-8")
+        stem = f"transitions_{datetime.now():%Y%m%d_%H%M%S}"
+        suffix = f"_{label}" if label else ""
+        self.path = output_dir / f"{stem}{suffix}.csv"
+        n = 2
+        while self.path.exists():  # two runs started in the same second must not overwrite each other
+            self.path = output_dir / f"{stem}_{n}{suffix}.csv"
+            n += 1
+        self._file = self.path.open("x", newline="", encoding="utf-8")
         self._writer = csv.writer(self._file)
         self._writer.writerow(self.COLUMNS)
         self._file.flush()
@@ -124,8 +133,12 @@ class Pipeline:
         model: Any | None = None,
         tracker: str = DEFAULT_TRACKER,
         output_dir: Path = DEFAULT_OUTPUT_DIR,
+        label: str | None = None,
     ) -> None:
-        """`model` is an already-loaded YOLO model; leave it None to load `model_path` (tests pass a fake)."""
+        """`model` is an already-loaded YOLO model; leave it None to load `model_path` (tests pass a fake).
+
+        `label` is added to the transition log's filename, e.g. "s6" for evaluation scenario 6.
+        """
         self.source = source
         self.analyzer = analyzer
         self.sink = sink
@@ -133,11 +146,12 @@ class Pipeline:
         self.model = model
         self.tracker = tracker
         self.output_dir = output_dir
+        self.label = label
 
     def run(self) -> None:
         """Process frames until sink.should_stop(). Ctrl+C (KeyboardInterrupt) also stops it cleanly."""
         model = self.model if self.model is not None else self._load_model()
-        transitions = TransitionLog(self.output_dir)
+        transitions = TransitionLog(self.output_dir, self.label)
         fps = FpsMeter()
         missed_reads = 0
         log.info("Logging state changes (no images) to %s", transitions.path)

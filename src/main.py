@@ -8,6 +8,7 @@ import argparse
 import logging
 
 from sentra.capture import FrameSource, parse_source
+from sentra.evaluation import SCENARIOS, scenario_label
 from sentra.pipeline import DEFAULT_MODEL, Pipeline
 from sentra.posture import PostureAnalyzer
 from sentra.ui.cv_dashboard import CvDashboard
@@ -30,6 +31,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ui", choices=("cv", "web"), default="cv", help="Dashboard type")
     parser.add_argument("--privacy", action="store_true", help="Start in skeleton-only privacy mode")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Pose model weights file")
+    parser.add_argument(
+        "--scenario", type=int, choices=sorted(SCENARIOS), metavar="1-9",
+        help="Label this run as an evaluation scenario (docs/PHASE1_PLAN.md, Section 11) "
+             "so python src/eval_report.py can score it",
+    )
     return parser
 
 
@@ -51,11 +57,15 @@ def main() -> None:
         raise SystemExit(str(exc)) from None
     rotation = f", rotated {args.rotate} degrees clockwise" if args.rotate else ""
     log.info("Camera: %s%s. Click the video window and press q to quit.", source.description, rotation)
+    label = None
+    if args.scenario:
+        label = scenario_label(args.scenario)
+        log.info("Evaluation run, scenario %d: %s", args.scenario, SCENARIOS[args.scenario].description)
 
     try:
         sink = CvDashboard(privacy=args.privacy)
         try:
-            Pipeline(source, PostureAnalyzer(), sink, model_path=args.model).run()
+            Pipeline(source, PostureAnalyzer(), sink, model_path=args.model, label=label).run()
         except KeyboardInterrupt:
             log.info("Stopped with Ctrl+C.")
         finally:
