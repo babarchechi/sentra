@@ -11,7 +11,7 @@ import sentra.guide.view as view_module
 from sentra.guide.alerts import AlertPolicy
 from sentra.guide.cameras import CameraCatalog, CameraChoice, nice_name, stream_label
 from sentra.guide.pipeline import GuideControls
-from sentra.guide.view import BAR, MENU_X, ROW_H, YELLOW, GuideView
+from sentra.guide.view import BAR, MENU_X, PANEL_W, ROW_H, YELLOW, GuideView
 
 BUILT_IN = ("id-hp", "HP 5MP Camera")
 DROIDCAM = ("id-droid", "DroidCam Video")
@@ -190,7 +190,7 @@ def test_idle_screen_keeps_the_last_frame_and_shows_the_message():
     controls.switching = True
     controls.tell("Switching to DroidCam Video...")
     canvas = view.render_idle("Switching to DroidCam Video...")
-    assert canvas.shape == (480 + 3 * BAR, 640, 3)  # blank screen before the first frame: bars + toolbar
+    assert canvas.shape == (480 + 3 * BAR, 640 + PANEL_W, 3)  # blank screen before the first frame: bars + toolbar
     middle = canvas[BAR * 2:-BAR]
     assert (middle == YELLOW).all(axis=2).any()  # the message is drawn over the video area
 
@@ -239,7 +239,7 @@ def test_close_after_the_window_was_closed_with_x_does_not_crash(monkeypatch):
 
 def test_view_without_a_camera_list_has_no_toolbar():
     view = GuideView(GuideControls(), AlertPolicy(), show_window=False)
-    assert view.menu is None and view.render_idle().shape == (480 + 2 * BAR, 640, 3)
+    assert view.menu is None and view.render_idle().shape == (480 + 2 * BAR, 640 + PANEL_W, 3)
     view.handle_key(ord("c"))  # no list to open; nothing happens
     assert not view.should_stop()
 

@@ -5,8 +5,12 @@ Rules (all tunable in AlertConfig):
 - Tiny boxes (far away or small things) are ignored.
 - A label + direction must be seen in `persist_frames` of the last `persist_window` frames before it is said,
   so one-frame flickers are never spoken.
-- The same label + direction is not repeated for `repeat_after_s`, and nothing is said within `min_gap_s` of
-  the previous announcement. At most one announcement per frame: the most important one.
+- No repeating unchanged information. A label + direction that stays in view is said once. It is said again only
+  when it comes back after being out of view for `forget_after_s`, when more of them appear (1 -> 2 chairs), or,
+  for objects in or touching the central band, as a reminder every `remind_after_s`. Moving to another direction
+  is new information (a new label + direction). Never sooner than `repeat_after_s` after it was last said.
+- Nothing is said within `min_gap_s` of the previous announcement. At most one announcement per frame: the most
+  important one.
 - Importance: severity (central and large first), then confident over uncertain, then size, then score.
 - A low-confidence detection that is large and central becomes "Possible obstacle ahead." The label is not
   spoken because the model isn't sure of it.
@@ -26,6 +30,7 @@ from sentra.guide.schema import (
     DetectionFrame,
     GuideAlert,
     Region,
+    Severity,
     SpatialObject,
 )
 
@@ -61,7 +66,9 @@ class AlertConfig:
     min_view_height: float = 0.1            # ignore boxes shorter than this share of the frame height
     persist_frames: int = 3
     persist_window: int = 5
-    repeat_after_s: float = 10.0
+    repeat_after_s: float = 10.0             # never say the same label + direction again sooner than this
+    forget_after_s: float = 3.0              # out of view this long, then back: worth saying again
+    remind_after_s: float | None = 30.0      # still in view: remind about central objects this often (None: never)
     min_gap_s: float = 2.5
     max_frame_age_s: float = 1.0
     labels: frozenset[str] | None = field(default=DEFAULT_ANNOUNCE_LABELS)  # None = every class
@@ -112,6 +119,9 @@ class AlertPolicy:
         self._clock = clock
         self._history: deque[set[GroupKey]] = deque(maxlen=self.config.persist_window)
         self._last_said: dict[GroupKey, float] = {}
+        self._said_count: dict[GroupKey, int] = {}   # how many there were when last said
+        self._last_seen: dict[GroupKey, float] = {}
+        self._gone: set[GroupKey] = set()             # said before, then out of view for forget_after_s
         self._last_any = float("-inf")
 
     def is_confident(self, obj: SpatialObject) -> bool:
@@ -149,6 +159,11 @@ class AlertPolicy:
         now_frame = frame.timestamp
         groups = self.group(objects)
         self._history.append(set(groups))
+        for key in groups:
+            self._last_seen[key] = now_frame
+        for key in self._last_said:
+            if key not in groups and now_frame - self._last_seen.get(key, now_frame) >= cfg.forget_after_s:
+                self._gone.add(key)
 
         age_s = self._clock() - frame.timestamp
         if age_s > cfg.max_frame_age_s:
@@ -156,23 +171,46 @@ class AlertPolicy:
         if now_frame - self._last_any < cfg.min_gap_s:
             return ()
 
-        candidates = [
-            key for key in groups
+        why_new = {
+            key: why for key in groups
             if self._seen_count(key) >= cfg.persist_frames
-            and now_frame - self._last_said.get(key, float("-inf")) >= cfg.repeat_after_s
-        ]
-        if not candidates:
+            and (why := self._news(key, groups[key], now_frame)) is not None
+        }
+        if not why_new:
             return ()
-        best = max(candidates, key=lambda key: self._priority(key, groups[key]))
-        alert = self._make_alert(best, groups[best], frame, age_s)
+        best = max(why_new, key=lambda key: self._priority(key, groups[key]))
+        alert = self._make_alert(best, groups[best], frame, age_s, why_new[best])
         self._last_said[best] = now_frame
+        self._said_count[best] = alert.count
+        self._gone.discard(best)
         self._last_any = now_frame
         return (alert,)
+
+    def _news(self, key: GroupKey, members: list[SpatialObject], now: float) -> str | None:
+        """Why this label + direction is worth saying now, or None if it would repeat unchanged information."""
+        cfg = self.config
+        if key not in self._last_said:
+            return "new"
+        since = now - self._last_said[key]
+        if since < cfg.repeat_after_s:
+            return None
+        if key in self._gone:
+            return f"back in view after {cfg.forget_after_s:.0f}+ s away"
+        count = 1 if key[0] == OBSTACLE else len(members)
+        if count > self._said_count.get(key, 1):
+            return f"more of them ({self._said_count.get(key, 1)} -> {count})"
+        central = max(SEVERITY_RANK[o.severity] for o in members) >= SEVERITY_RANK[Severity.MEDIUM]
+        if cfg.remind_after_s is not None and central and since >= cfg.remind_after_s:
+            return f"still there after {since:.0f} s (reminder)"
+        return None
 
     def reset(self) -> None:
         """Forget recent frames and cooldowns, e.g. after switching cameras: the new view starts fresh."""
         self._history.clear()
         self._last_said.clear()
+        self._said_count.clear()
+        self._last_seen.clear()
+        self._gone.clear()
         self._last_any = float("-inf")
 
     def _seen_count(self, key: GroupKey) -> int:
@@ -189,7 +227,7 @@ class AlertPolicy:
         )
 
     def _make_alert(
-        self, key: GroupKey, members: list[SpatialObject], frame: DetectionFrame, age_s: float
+        self, key: GroupKey, members: list[SpatialObject], frame: DetectionFrame, age_s: float, why: str = "new"
     ) -> GuideAlert:
         name, region = key
         count = 1 if name == OBSTACLE else len(members)
@@ -202,8 +240,7 @@ class AlertPolicy:
         what = "uncertain detection" if name == OBSTACLE else name
         reason = (
             f"{what} (score {confidence:.2f}, {severity.value}) {region.value} "
-            f"in {self._seen_count(key)}/{len(self._history)} recent frames; "
-            f"not said in the last {self.config.repeat_after_s:.0f} s"
+            f"in {self._seen_count(key)}/{len(self._history)} recent frames; {why}"
         )
         if any(o.depth.meters is not None and not o.depth.validated for o in members):
             reason += "; unvalidated distance not spoken"
