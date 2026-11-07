@@ -34,6 +34,7 @@ from sentra.guide.cameras import CameraChoice, is_stream
 from sentra.guide.depth import DepthProvider, NoDepth
 from sentra.guide.detector import ObjectDetector
 from sentra.guide.event_log import DEFAULT_OUTPUT_DIR, GuideEventLog
+from sentra.guide.person_check import PersonCheck
 from sentra.guide.schema import GuideSink, GuideUpdate
 from sentra.guide.spatial import SpatialEstimator
 from sentra.guide.speech import Speaker
@@ -124,13 +125,16 @@ class RunStats:
     seconds: float = 0.0
     latencies_ms: list[float] = field(default_factory=list)
     inference_ms: list[float] = field(default_factory=list)
+    person_checks: int = 0         # pose-model runs by the person check
+    person_check_ms: list[float] = field(default_factory=list)
+    unconfirmed_people: int = 0    # "person" detections dropped as hands/arms/partial bodies
 
     @property
     def fps(self) -> float:
         return self.frames / self.seconds if self.seconds > 0 else 0.0
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "frames": self.frames,
             "seconds": round(self.seconds, 1),
             "fps": round(self.fps, 1),
@@ -139,14 +143,26 @@ class RunStats:
             "alerts": self.alerts,
             "stale_frames": self.stale_frames,
         }
+        if self.person_checks or self.unconfirmed_people:
+            data["person_checks"] = self.person_checks
+            data["median_person_check_ms"] = (round(median(self.person_check_ms), 1)
+                                              if self.person_check_ms else None)
+            data["unconfirmed_people"] = self.unconfirmed_people
+        return data
 
     def summary(self) -> str:
         d = self.as_dict()
         latency = f"{d['median_latency_ms']:.0f} ms" if d["median_latency_ms"] is not None else "n/a"
         inference = f"{d['median_inference_ms']:.0f} ms" if d["median_inference_ms"] is not None else "n/a"
-        return (f"{d['frames']} frames in {d['seconds']} s ({d['fps']} fps); median model time {inference}, "
+        text = (f"{d['frames']} frames in {d['seconds']} s ({d['fps']} fps); median model time {inference}, "
                 f"median capture-to-decision latency {latency}; {d['alerts']} alerts; "
                 f"{d['stale_frames']} frames too old to announce")
+        if "person_checks" in d:
+            check = d["median_person_check_ms"]
+            text += (f"; person check ran on {d['person_checks']} frames"
+                     + (f" ({check:.0f} ms median)" if check is not None else "")
+                     + f" and ignored {d['unconfirmed_people']} hand/arm/partial 'person' boxes")
+        return text
 
 
 class GuidePipeline:
@@ -165,9 +181,11 @@ class GuidePipeline:
         label: str | None = None,
         clock=time.perf_counter,
         open_source: Callable[[int | str], Any] | None = None,  # opens a camera for a switch; None = no switching
+        person_check: PersonCheck | None = None,  # drops "person" boxes that are only hands/arms; None = off
     ) -> None:
         self.source = source
         self.detector = detector
+        self.person_check = person_check
         self.sink = sink
         self.speaker = speaker
         self.spatial = spatial or SpatialEstimator()
@@ -191,6 +209,8 @@ class GuidePipeline:
     def run(self) -> RunStats:
         """Process frames until the sink says stop, a video file ends, or Ctrl+C."""
         self.detector.load()
+        if self.person_check is not None:
+            self.person_check.load()
         event_log = GuideEventLog(self.output_dir, self.label)
         self.log_path = event_log.path
         log.info("Logging alerts (no images) to %s", event_log.path)
@@ -224,6 +244,13 @@ class GuidePipeline:
 
                 description = getattr(self.source, "description", "")
                 frame = self.detector.detect(image, frame_id, timestamp, description)
+                if self.person_check is not None:
+                    checks, rejected = self.person_check.checks, self.person_check.rejected
+                    frame = self.person_check.filter(image, frame)
+                    if self.person_check.checks > checks:
+                        self.stats.person_checks += 1
+                        self.stats.person_check_ms.append(self.person_check.check_ms[-1])
+                    self.stats.unconfirmed_people += self.person_check.rejected - rejected
                 depths = self.depth.estimate(image, frame)
                 objects = self.spatial.locate(frame, depths)
                 alerts = self.policy.update(objects, frame)
@@ -345,6 +372,8 @@ class GuidePipeline:
     def _reset_scene(self) -> None:
         """Forget track IDs, remembered regions and recent cues (after a camera switch or rotation)."""
         self.detector.reset_tracking()
+        if self.person_check is not None:
+            self.person_check.reset()
         self.spatial.reset()
         self.policy.reset()
 
