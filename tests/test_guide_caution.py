@@ -56,7 +56,9 @@ def test_something_big_in_the_middle_gets_a_caution():
 
 def test_ahead_but_not_big_and_big_but_to_the_side_are_ordinary_cues():
     assert [(a.text, a.caution) for _, a in play([(0.5, [CHAIR])])] == [("Chair ahead.", False)]
-    assert [(a.text, a.caution) for _, a in play([(0.5, [BIG_CHAIR_LEFT])])] == [("Chair to your left.", False)]
+    assert play([(0.5, [BIG_CHAIR_LEFT])]) == []  # fully off to the side: quiet by default (not in the path)
+    sides = AlertConfig(announce_sides=True)
+    assert [(a.text, a.caution) for _, a in play([(0.5, [BIG_CHAIR_LEFT])], sides)] == [("Chair to your left.", False)]
 
 
 def test_one_big_frame_is_not_enough():
@@ -64,11 +66,20 @@ def test_one_big_frame_is_not_enough():
     assert texts(said) == ["Chair ahead."]
 
 
-def test_a_caution_repeats_every_five_seconds_while_it_stays_and_nothing_plain_in_between():
-    said = play([(12.0, [BIG_CHAIR])])
-    assert texts(said) == ["Caution, chair ahead."] * 3
+def test_a_caution_keeps_repeating_every_two_seconds_while_it_stays_and_nothing_plain_in_between():
+    said = play([(10.0, [BIG_CHAIR])])
+    assert texts(said) == ["Caution, chair ahead."] * 5
     times = [t for t, _ in said]
-    assert times[1] - times[0] == pytest.approx(5.0, abs=0.11) and times[2] - times[1] == pytest.approx(5.0, abs=0.11)
+    assert all(b - a == pytest.approx(2.0, abs=0.11) for a, b in zip(times, times[1:]))
+
+
+def test_cautioning_stops_once_it_is_no_longer_in_the_way_and_says_nothing_reassuring():
+    # In the way for 5 s, then walked past (gone), then off to the side.
+    said = play([(5.0, [BIG_CHAIR]), (4.0, []), (4.0, [BIG_CHAIR_LEFT])])
+    cautions = [t for t, a in said if a.caution]
+    assert len(cautions) == 3 and cautions[-1] < 5.0  # at ~0.2, 2.2, 4.2 s, none after it left
+    after = [a.text for t, a in said if t >= 5.0]
+    assert after == []  # gone, then off to the side: quiet. Never a "clear".
 
 
 def test_something_announced_that_comes_close_gets_its_caution_straight_away():
@@ -125,7 +136,7 @@ def test_reset_forgets_cautions():
         f = frame(BIG_CHAIR, frame_id=10 + i, t=101.0 + i * 0.1)
         clock.now = f.timestamp
         out = policy.update(spatial.locate(f), f)
-    assert out and out[0].text == "Caution, chair ahead."  # not held back by the old 5 s repeat
+    assert out and out[0].text == "Caution, chair ahead."  # not held back by the old repeat timer
 
 
 # The laptop voice ------------------------------------------------------------------------------------------
@@ -284,7 +295,7 @@ def test_cli_caution_options():
     from guide import build_parser, build_policy
 
     args = build_parser().parse_args([])
-    assert build_policy(args).config.caution and build_policy(args).config.caution_repeat_after_s == 5.0
+    assert build_policy(args).config.caution and build_policy(args).config.caution_repeat_after_s == 2.0
     args = build_parser().parse_args(["--no-caution", "--caution-every", "3"])
     config = build_policy(args).config
     assert not config.caution and config.caution_repeat_after_s == 3.0

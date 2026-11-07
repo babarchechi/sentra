@@ -67,7 +67,7 @@ Python 3.12 for Windows).
 | Per frame | at most 1 cue, the most important | Importance: central and large → central → touching the centre → side; then confident before uncertain, bigger, higher score |
 | Distances | spoken only if `DepthEstimate.validated` | No invented meters |
 | **Caution** (danger warning) | something announced (or a "possible obstacle") in the central band and ≥ 50% of the frame height (`SpatialConfig.high_view_height`) in 3 of the last 5 frames → "Caution, chair ahead." (`--no-caution` turns it off) | Big in the middle of the view means big or near, in the way. Box size is not a distance |
-| Caution timing | said before any other cue; may follow any cue after 1 s; unlike ordinary cues (said once), repeats every 5 s while it stays in the way (`--caution-every`) | Something in the way can't wait behind "Person to your left." |
+| Caution timing | said before any other cue; may follow any cue after 1 s; unlike ordinary cues (said once), keeps repeating every 2 s for as long as it stays in the way, and stops (silently, never "clear") once it isn't (`--caution-every`) | Something in the way can't wait behind "Person to your left." |
 | Caution delivery | `GuideAlert.caution = true`: the laptop voice drops waiting cues; the phone page vibrates (Android; iPhones can't vibrate from a web page), interrupts an ordinary cue and shows it white on red; the debug view frames the video in red | Felt as well as heard |
 | Words never produced | "clear", "safe" (enforced by a test) | Missing detections don't mean a free path. There is **no "safe to keep walking" signal**: no caution never means nothing is in the way |
 

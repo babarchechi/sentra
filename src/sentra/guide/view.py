@@ -31,6 +31,7 @@ import numpy as np
 
 from sentra.guide.alerts import AlertPolicy, spoken_name
 from sentra.guide.cameras import CameraCatalog, CameraChoice
+from sentra.guide.obstacles import ObstacleScanner
 from sentra.guide.pipeline import GuideControls
 from sentra.guide.schema import SEVERITY_RANK, GuideAlert, GuideUpdate, Region, Severity, SpatialObject
 from sentra.guide.spatial import SpatialConfig
@@ -98,7 +99,9 @@ def not_announced_reason(policy: AlertPolicy, obj: SpatialObject) -> str:
         return "not on alert list"
     if obj.view_height < cfg.min_view_height:
         return "small / far away"
-    return f"score under {cfg.announce_confidence:.0%}"
+    if det.confidence < cfg.announce_confidence:
+        return f"score under {cfg.announce_confidence:.0%}"
+    return policy.quiet_reason(obj) or "not announced"
 
 
 def path_position(obj: SpatialObject) -> str:
@@ -225,8 +228,10 @@ class GuideView:
         voice_name: str = "windows",
         show_window: bool = True,
         cameras: CameraCatalog | None = None,
+        obstacles: ObstacleScanner | None = None,
     ) -> None:
         self.controls = controls
+        self.obstacles = obstacles  # the experimental floor scan, drawn over the video when given
         self.policy = policy
         self.spatial = spatial or SpatialConfig()
         self.voice_name = voice_name
@@ -334,6 +339,7 @@ class GuideView:
         vh, vw = video.shape[:2]
 
         self._draw_regions(video)
+        self._draw_floor_scan(video)
         for obj in update.objects:
             self._draw_object(video, obj, scale)
         if update.stale:
@@ -373,6 +379,35 @@ class GuideView:
                        else (f"c: choose camera   r: rotate ({controls.rotation} deg)", GREY))
         x = MENU_X + max(self.menu.width, _text_width(self.menu.header() + "    ") + 2 * MENU_PAD + 16) + 14
         _put(canvas, text, (x, BAR + self.toolbar - 10), 0.5, color, 1)
+
+    def _draw_floor_scan(self, video: np.ndarray) -> None:
+        """Experimental open-space view: how far the floor seems to reach in each column, and the scan's verdict.
+
+        Green = open-looking floor, red = the floor stops close in the path with nothing named there. Marked
+        unverified: open-looking pixels are not proof that the way is walkable, and nothing here is spoken as a
+        direction to take.
+        """
+        if self.obstacles is None:
+            return
+        vh, vw = video.shape[:2]
+        scan = self.obstacles.latest()
+        if scan is not None:
+            unexplained = self.obstacles.last.unexplained
+            xs = (np.arange(scan.width) + 0.5) * vw / scan.width
+            ys = vh * (1.0 - scan.free)
+            tint = video.copy()
+            for i in range(scan.width):
+                bad = unexplained.size == scan.width and unexplained[i]
+                x1, x2 = int(i * vw / scan.width), int((i + 1) * vw / scan.width)
+                cv2.rectangle(tint, (x1, int(ys[i])), (x2, vh), CAUTION_RED if bad else GREEN, -1)
+            video[:] = cv2.addWeighted(tint, 0.22, video, 0.78, 0)
+            pts = np.stack([xs, ys], axis=1).astype(np.int32)
+            cv2.polylines(video, [pts], False, WHITE, 1, cv2.LINE_AA)
+            thirds = scan.thirds(self.obstacles.config)
+            share = " ".join(f"{name} {thirds[r]:.0%}" for r, name in
+                             ((Region.LEFT, "L"), (Region.CENTER, "A"), (Region.RIGHT, "R")))
+            _put(video, f"open-looking floor (unverified): {share}", (8, vh - 32), 0.45, WHITE, 1)
+        _put(video, self.obstacles.status(), (8, vh - 12), 0.45, YELLOW, 1)
 
     def _flash_region(self) -> Region | None:
         if self._last_alert is not None and time.perf_counter() - self._last_alert_at < FLASH_S:

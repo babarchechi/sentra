@@ -1,4 +1,6 @@
 """Alert policy: persistence, cooldown, priority, wording and honesty rules for Sentra Guide."""
+from dataclasses import replace
+
 import pytest
 
 from guide_helpers import FakeClock, det, frame
@@ -14,7 +16,10 @@ class Scene:
 
     def __init__(self, config=None, lag=0.05):
         self.clock = FakeClock()
-        self.policy = AlertPolicy(config or AlertConfig(), clock=self.clock)
+        # These tests check timing, wording and grouping, including side cues, so they announce side objects too.
+        # The default path-only rules (quiet sides and far objects) are tested in test_guide_path.py.
+        config = replace(config or AlertConfig(), announce_sides=True)
+        self.policy = AlertPolicy(config, clock=self.clock)
         self.spatial = SpatialEstimator()
         self.lag = lag
         self.t = 100.0

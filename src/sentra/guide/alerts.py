@@ -37,6 +37,7 @@ from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
+from sentra.guide.obstacles import UNKNOWN_OBSTACLE
 from sentra.guide.person_check import UNCONFIRMED_PERSON
 from sentra.guide.schema import (
     SEVERITY_RANK,
@@ -50,7 +51,8 @@ from sentra.guide.schema import (
 # Labels that are never spoken by name, not even with --all-labels. When large and central they can still be a
 # "Possible obstacle ahead.". UNCONFIRMED_PERSON: a "person" box the pose model found no body in (a hand, an arm,
 # or a real person seen too close), see sentra.guide.person_check.
-OBSTACLE_ONLY_LABELS: frozenset[str] = frozenset({UNCONFIRMED_PERSON})
+# UNKNOWN_OBSTACLE: the floor stops close ahead and no recognised object explains it (sentra.guide.obstacles).
+OBSTACLE_ONLY_LABELS: frozenset[str] = frozenset({UNCONFIRMED_PERSON, UNKNOWN_OBSTACLE})
 
 # COCO classes worth mentioning for someone moving through a room or along a path. Small tabletop things
 # (cups, phones, keyboards, ...) are left out on purpose: they would make the guide chatty.
@@ -71,6 +73,8 @@ SPOKEN_NAMES = {
 _IRREGULAR_PLURALS = {"person": "people", "bus": "buses", "couch": "couches", "bench": "benches"}
 
 PLACE_WORDS = {Region.CENTER: "ahead", Region.LEFT: "to your left", Region.RIGHT: "to your right"}
+# Off-centre but overlapping the central band: partly in the path
+EDGE_WORDS = {Region.CENTER: "ahead", Region.LEFT: "ahead, slightly left", Region.RIGHT: "ahead, slightly right"}
 OBSTACLE = "obstacle"
 
 GroupKey = tuple[str, Region]  # (spoken name, region)
@@ -91,8 +95,11 @@ class AlertConfig:
     max_frame_age_s: float = 1.0
     labels: frozenset[str] | None = field(default=DEFAULT_ANNOUNCE_LABELS)  # None = every class
     caution: bool = True                    # warn "Caution, ... ahead." about big things in the way
-    caution_repeat_after_s: float = 5.0     # repeat a caution this often while the thing stays in the way
+    caution_repeat_after_s: float = 2.0     # keep repeating a caution this often while the thing stays in the way
+                                            # (about as fast as "Caution, chair ahead." can be said)
     caution_min_gap_s: float = 1.0          # a caution may follow any earlier cue after this long
+    announce_sides: bool = False            # also announce things fully off to the side (the old behaviour)
+    path_min_view_height: float = 0.2       # in the path but shorter than this share of the frame: far, stay quiet
 
     def __post_init__(self) -> None:
         if not 1 <= self.persist_frames <= self.persist_window:
@@ -113,14 +120,16 @@ def plural(name: str) -> str:
     return name + "s"
 
 
-def alert_text(name: str, count: int, region: Region, meters: float | None = None, *, caution: bool = False) -> str:
+def alert_text(name: str, count: int, region: Region, meters: float | None = None, *, caution: bool = False,
+               edge: bool = False) -> str:
     """E.g. "Chair ahead.", "2 people to your right.", "Chair ahead, approximately 1.4 meters.",
+    with `edge` (off-centre but overlapping the path): "Chair ahead, slightly left.",
     and with `caution`: "Caution, chair ahead.", "Caution, possible obstacle ahead."."""
     if name == OBSTACLE:
         subject = "possible obstacle"
     else:
         subject = f"{count} {plural(name)}" if count > 1 else name
-    text = f"{subject} {PLACE_WORDS[region]}"
+    text = f"{subject} {(EDGE_WORDS if edge else PLACE_WORDS)[region]}"
     if meters is not None:
         text += f", approximately {meters:.1f} meters"
     if caution:
@@ -151,13 +160,37 @@ class AlertPolicy:
         self._last_any = float("-inf")
 
     def is_confident(self, obj: SpatialObject) -> bool:
+        """Can this object be named in a cue? Sure enough, on the label list, and (unless announce_sides) in the path."""
         cfg = self.config
         return (
             obj.detection.confidence >= cfg.announce_confidence
             and obj.view_height >= cfg.min_view_height
             and obj.detection.label not in OBSTACLE_ONLY_LABELS
             and (cfg.labels is None or obj.detection.label in cfg.labels)
+            and self.in_path(obj)
         )
+
+    def in_path(self, obj: SpatialObject) -> bool:
+        """Could this object be in the way of someone walking where the camera points?
+
+        Its box must overlap the central band (the stand-in for the walking corridor) and not be small (far away).
+        Things fully off to the side, like a chair against the wall, stay quiet; they're still on screen. A centred
+        box is not proof of a collision risk either: that's why cues say what is ahead, never what to do.
+        """
+        cfg = self.config
+        if cfg.announce_sides:
+            return True
+        return obj.in_corridor and obj.view_height >= cfg.path_min_view_height
+
+    def quiet_reason(self, obj: SpatialObject) -> str:
+        """Why the path rules keep an otherwise announceable object quiet ("" if they don't)."""
+        if self.config.announce_sides:
+            return ""
+        if not obj.in_corridor:
+            return "to the side, not in the path"
+        if obj.view_height < self.config.path_min_view_height:
+            return "far away (small) in the path"
+        return ""
 
     def group(self, objects: Iterable[SpatialObject]) -> dict[GroupKey, list[SpatialObject]]:
         """Group announceable objects by (spoken name, region). Uncertain ones go under ("obstacle", CENTER)."""
@@ -300,8 +333,13 @@ class AlertPolicy:
         track_id = members[0].detection.track_id if len(members) == 1 else None
         what = name
         if name == OBSTACLE:
-            unconfirmed = any(o.detection.label in OBSTACLE_ONLY_LABELS for o in members)
-            what = "person with no body seen (hand, arm or too close)" if unconfirmed else "uncertain detection"
+            labels = {o.detection.label for o in members}
+            if UNKNOWN_OBSTACLE in labels:
+                what = "floor blocked close ahead, no recognised object (floor scan)"
+            elif UNCONFIRMED_PERSON in labels:
+                what = "person with no body seen (hand, arm or too close)"
+            else:
+                what = "uncertain detection"
         if caution:
             reason = (
                 f"in the way: {what} (score {confidence:.2f}, {severity.value}) {region.value}, big in view "
@@ -322,7 +360,8 @@ class AlertPolicy:
             region=region,
             severity=severity,
             confidence=round(confidence, 3),
-            text=alert_text(name, count, region, meters, caution=caution),
+            text=alert_text(name, count, region, meters, caution=caution,
+                            edge=region is not Region.CENTER and all(o.in_corridor for o in members)),
             reason=reason,
             track_id=track_id,
             meters=meters,
