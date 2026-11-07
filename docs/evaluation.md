@@ -3,6 +3,9 @@
 Owner: babarchechi. Protocol: docs/PHASE1_PLAN.md, Section 11. Consenting teammates only, mat for every drop,
 no video recorded (CSV event logs only).
 
+Record each run with `python src/main.py --source 0 --scenario <N>`, then paste the output of
+`python src/eval_report.py` over the table below.
+
 **Session date/time:** ____  **Camera position:** ____  **Average fps:** ____  **Thresholds (commit):** ____
 
 | # | Scenario | Runs | Correct alerts | False alarms | Misses | Notes |
