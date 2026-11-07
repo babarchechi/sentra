@@ -5,7 +5,9 @@ tap before a page may speak), and then hears every cue in the browser's own voic
 person instead of from the laptop speakers.
 
 What is sent, over Server-Sent Events (one long HTTP response, standard library only):
-- ``alert``: ``GuideAlert.to_dict()`` exactly as the event log has it (the contract in docs/ARCHITECTURE.md).
+- ``alert``: ``GuideAlert.to_dict()`` (the contract in docs/ARCHITECTURE.md) **minus ``source``**. The source is the
+  camera's address (e.g. a DroidCam URL): anyone who has it can watch the live camera, so it stays in the laptop's
+  event log and never reaches the page.
 - ``status``: about once a second: fps, latency, distance mode, whether the laptop is muted. Doubles as a heartbeat,
   so the page can say "Disconnected" within a few seconds.
 - ``hello``: on connect, the last few alerts (shown, never spoken) and the latest status.
@@ -34,7 +36,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from sentra.guide.schema import SCHEMA_VERSION, GuideSink, GuideUpdate
+from sentra.guide.schema import SCHEMA_VERSION, GuideAlert, GuideSink, GuideUpdate
 
 log = logging.getLogger(__name__)
 
@@ -77,6 +79,26 @@ def check_host(host: str) -> str:
     return host
 
 
+# Address ranges that phones and Windows use for their own hotspots. Anything else private (campus Wi-Fi, a home
+# router) works, but then everyone on that network can open the page, so it gets a warning.
+KNOWN_HOTSPOT_NETWORKS = {
+    "iPhone hotspot": ipaddress.ip_network("172.20.10.0/28"),
+    "Android hotspot (older phones)": ipaddress.ip_network("192.168.43.0/24"),
+    "Windows Mobile Hotspot": ipaddress.ip_network("192.168.137.0/24"),
+}
+
+
+def hotspot_warning(host: str) -> str | None:
+    """A warning to show when `host` isn't loopback or a known phone-hotspot address; None when it's fine."""
+    ip = ipaddress.ip_address(host)
+    if ip.is_loopback or any(ip in net for net in KNOWN_HOTSPOT_NETWORKS.values()):
+        return None
+    return (f"{host} isn't a known phone-hotspot address (an iPhone hotspot gives the laptop 172.20.10.x). If this "
+            "is campus or shared Wi-Fi, anyone on that network can open the phone page and read the cues. Use the "
+            "phone's own hotspot for real sessions. (Newer Android hotspots use random addresses; if you're on "
+            "one, this warning is expected.)")
+
+
 def local_ipv4() -> list[str]:
     """This laptop's IPv4 addresses (not 127.x), to help pick --web-host. Best effort; may be empty."""
     found: list[str] = []
@@ -100,6 +122,14 @@ def hotspot_hint() -> str:
     if addresses:
         return f"Use --web-host with this laptop's address on the phone's hotspot (this laptop: {', '.join(addresses)})"
     return "Use --web-host with this laptop's address on the phone's hotspot (see ipconfig)"
+
+
+PAGE_HIDDEN_FIELDS = frozenset({"source"})  # camera address: watching the stream needs nothing else
+
+
+def page_alert(alert: GuideAlert) -> dict[str, Any]:
+    """What the page gets for one alert: GuideAlert.to_dict() without the camera address."""
+    return {key: value for key, value in alert.to_dict().items() if key not in PAGE_HIDDEN_FIELDS}
 
 
 def _put_newest(q: queue.Queue, item: Any) -> None:
@@ -264,6 +294,9 @@ class WebSpeechPage:
         clock: Callable[[], float] = time.perf_counter,
     ) -> None:
         check_host(host)
+        warning = hotspot_warning(host)
+        if warning:
+            log.warning(warning)
         self.controls = controls
         self.status_every_s = status_every_s
         self._clock = clock
@@ -286,9 +319,10 @@ class WebSpeechPage:
             self.broadcaster.send("status", self.status(update))  # first, so the page knows if it's muted
             self._last_status = now
         for alert in update.alerts:
-            self.broadcaster.send("alert", alert.to_dict())
+            self.broadcaster.send("alert", page_alert(alert))
 
     def status(self, update: GuideUpdate) -> dict[str, Any]:
+        # No "source": the camera address would let anyone with the page open the live stream.
         return {
             "schema": SCHEMA_VERSION,
             "type": "status",
@@ -298,7 +332,6 @@ class WebSpeechPage:
             "muted": bool(getattr(self.controls, "muted", False)),
             "stale": update.stale,
             "objects": len(update.objects),
-            "source": update.frame.source,
         }
 
     def should_stop(self) -> bool:

@@ -14,9 +14,17 @@ import pytest
 
 from sentra.guide.detector import ObjectDetector
 from sentra.guide.pipeline import GuideControls, GuidePipeline
-from sentra.guide.schema import SCHEMA_VERSION, GuideAlert, GuideUpdate, Region, Severity
+from sentra.guide.schema import SCHEMA_VERSION, DetectionFrame, GuideAlert, GuideUpdate, Region, Severity
 from sentra.guide.view import HeadlessSink
-from sentra.guide.web import STATIC_DIR, Broadcaster, TeeSink, WebSpeechPage, check_host
+from sentra.guide.web import (
+    STATIC_DIR,
+    Broadcaster,
+    TeeSink,
+    WebSpeechPage,
+    check_host,
+    hotspot_warning,
+    page_alert,
+)
 from guide_helpers import CHAIR_AHEAD, FakeModel, FakeSource, frame
 
 REPO = Path(__file__).resolve().parents[1]
@@ -24,13 +32,17 @@ REPO = Path(__file__).resolve().parents[1]
 
 # ----- helpers ------------------------------------------------------------------------------------------------
 
-def alert(text="Chair ahead.", t=100.0, severity=Severity.MEDIUM):
+CAMERA_URL = "http://10.113.7.42:4747/video"  # what describe_source() leaves of a DroidCam stream
+
+
+def alert(text="Chair ahead.", t=100.0, severity=Severity.MEDIUM, source="test"):
     return GuideAlert(timestamp=t, frame_id=1, label="chair", count=1, region=Region.CENTER, severity=severity,
-                      confidence=0.85, text=text, reason="test", source="test")
+                      confidence=0.85, text=text, reason="test", source=source)
 
 
-def update(*alerts, stale=False):
-    return GuideUpdate(frame=frame(), objects=(), alerts=tuple(alerts),
+def update(*alerts, stale=False, source="test"):
+    camera_frame = DetectionFrame(1, 100.0, 640, 480, (), source=source)
+    return GuideUpdate(frame=camera_frame if source != "test" else frame(), objects=(), alerts=tuple(alerts),
                        image=np.full((480, 640, 3), 7, np.uint8), fps=24.6, latency_ms=41.2,
                        depth_status="Distance: off (camera only)", stale=stale)
 
@@ -67,14 +79,17 @@ class Stream:
         assert self.response.status == 200
         assert self.response.getheader("Content-Type").startswith("text/event-stream")
 
+    raw: list[str]
+
     def next_event(self):
-        """Next (event, data) pair, skipping the retry line and keepalive comments."""
+        """Next (event, data) pair, skipping the retry line and keepalive comments. Every raw line is kept."""
         event, data = None, None
         while True:
             line = self.response.fp.readline()
             if not line:
                 return None  # stream ended
             line = line.decode("utf-8").rstrip("\n")
+            self.raw = getattr(self, "raw", []) + [line]
             if line.startswith("event: "):
                 event = line[len("event: "):]
             elif line.startswith("data: "):
@@ -152,9 +167,53 @@ def test_alert_reaches_the_phone_as_the_schema_json(page):
         assert stream.next_event()[0] == "status"  # status first, so the page knows whether it's muted
         event, data = stream.next_event()
         assert event == "alert"
-        assert data == alert().to_dict()  # exactly the contract: GuideAlert.to_dict()
+        expected = alert().to_dict()
+        del expected["source"]
+        assert data == expected  # the contract, GuideAlert.to_dict(), minus the camera address
     finally:
         stream.close()
+
+
+def test_camera_address_never_reaches_the_page(page):
+    """Review on #9: describe_source() keeps host, port and path, enough to open the live camera."""
+    for i in range(3):
+        page.publish(update(alert(f"Cue {i}.", source=CAMERA_URL), source=CAMERA_URL))
+    stream = Stream(page)  # connects after: gets hello with recent alerts + latest status
+    try:
+        stream.next_event()
+        page._clock.now = 5.0
+        page.publish(update(alert("Live cue.", source=CAMERA_URL), source=CAMERA_URL))
+        events = [stream.next_event()[0] for _ in range(2)]
+        assert events == ["status", "alert"]
+        text = "\n".join(stream.raw)
+        assert "Live cue." in text and "Cue 2." in text  # we really read hello, status and alert
+        assert "10.113.7.42" not in text and ":4747" not in text
+        assert '"source":' not in text  # ("depth_source" is fine: it's "none", "record3d", ...)
+    finally:
+        stream.close()
+
+
+def test_page_alert_drops_only_the_source():
+    data = page_alert(alert(source=CAMERA_URL))
+    assert "source" not in data
+    assert set(alert().to_dict()) - set(data) == {"source"}
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "172.20.10.2", "172.20.10.14", "192.168.43.20", "192.168.137.1"])
+def test_no_warning_on_loopback_and_phone_hotspots(host):
+    assert hotspot_warning(host) is None
+
+
+@pytest.mark.parametrize("host", ["10.113.7.42", "192.168.1.20", "172.20.11.2"])
+def test_warns_on_other_networks_like_campus_wifi(host):
+    assert "hotspot" in hotspot_warning(host)
+
+
+def test_page_logs_the_warning(caplog):
+    with caplog.at_level("WARNING", logger="sentra.guide.web"):
+        p = WebSpeechPage(host="127.0.0.1", port=0)
+        p.close()
+    assert not caplog.records  # loopback: no warning
 
 
 def test_status_heartbeat_is_throttled_and_carries_mute(page):
@@ -184,8 +243,8 @@ def test_no_image_data_is_ever_sent(page):
         page.publish(update(alert()))
         for _ in range(2):
             _, data = stream.next_event()
-            assert set(data) <= set(alert().to_dict()) | {"fps", "latency_ms", "depth_status", "muted",
-                                                         "stale", "objects", "source"}
+            assert set(data) <= set(page_alert(alert())) | {"fps", "latency_ms", "depth_status", "muted",
+                                                           "stale", "objects"}
             assert "image" not in data and "box" not in data
     finally:
         stream.close()

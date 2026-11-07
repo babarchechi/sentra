@@ -81,6 +81,7 @@ function applyStatus(status) {
   if (state.laptopMuted) parts.push("Muted on the laptop (m): cues shown, not spoken");
   if (status.stale) parts.push("Camera frames are delayed");
   els.laptop.textContent = parts.length ? `Laptop: ${parts.join(" · ")}` : "";
+  updateLiveRegion(); // muting on the laptop stops this page speaking, so screen readers must take over
 }
 
 // ---- Cues --------------------------------------------------------------------------------------------------
