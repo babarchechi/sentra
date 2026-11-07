@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from sentra.events import PersonPose, PersonStatus, PoseFrame, PostureState, StatusUpdate
+from sentra.posture import PostureAnalyzer
 from sentra.ui.cv_dashboard import (
     CONFIRMED,
     FALSE_ALARM,
@@ -21,6 +22,7 @@ from sentra.ui.cv_dashboard import (
     format_duration,
 )
 from sentra.ui.fake_events import HEIGHT, WIDTH, fake_updates, stick_figure
+from test_posture import FALL_ANGLE, FALL_HIPS, make_frame, moving_body  # Track A's synthetic-body helpers
 
 S = PostureState
 VIDEO_COLOR = (13, 37, 211)  # a colour the dashboard never draws itself
@@ -99,7 +101,7 @@ def test_confirm_and_false_alarm_are_logged(dash):
     assert rows[0]["seconds_to_response"] == "3.5"
     assert rows[0]["reason"] == "reason for #1"
     assert list(rows[0]) == ["alert_time", "track_id", "reason", "response", "response_time",
-                             "seconds_to_response", "confidence"]
+                             "seconds_to_response", "confidence", "earlier_track_ids"]
 
 
 def test_answered_alert_does_not_fire_again_while_still_down(dash, sound):
@@ -174,6 +176,107 @@ def test_answer_key_with_no_alert_does_nothing(dash):
     dash.handle_key(ord("c"))
     dash.handle_key(-1)
     assert read_log(dash) == []
+
+
+# ----- track ID changes mid-fall (review on #7) -----------------------------------------------------------------
+
+def drive_real_analyzer(dash, scene, duration, keys=(), fps=10.0):
+    """Feed `scene(t) -> [PersonPose]` through the real PostureAnalyzer into the dashboard.
+
+    `keys` is [(time, key)]: each key is pressed right after the first frame at or after that time.
+    """
+    analyzer = PostureAnalyzer()
+    pending = sorted(keys)
+    frame = np.zeros((480, 640, 3), np.uint8)
+    for i in range(int(duration * fps) + 1):
+        t = i / fps
+        pose = make_frame(*scene(t), timestamp=t)
+        dash.process(StatusUpdate(pose, analyzer.update(pose), frame, frame, fps))
+        while pending and pending[0][0] <= t + 1e-9:
+            dash.handle_key(ord(pending.pop(0)[1]))
+
+
+def falling_person(id_changes):
+    """One person who falls at 2 s and stays down. `id_changes` is [(time, new_track_id)], like ByteTrack
+    re-assigning the ID while their detection flickers on the floor."""
+    fall = moving_body(FALL_ANGLE, FALL_HIPS)
+
+    def scene(t):
+        track_id = 1
+        for at, new_id in id_changes:
+            if t >= at:
+                track_id = new_id
+        p = fall(t)
+        return [PersonPose(track_id, p.keypoints, p.box, p.box_confidence)]
+    return scene
+
+
+def test_id_change_moves_an_open_alert_instead_of_raising_a_new_one(dash, sound):
+    drive_real_analyzer(dash, falling_person([(9.0, 5)]), duration=15)
+    assert dash.alert_count == 1
+    assert sound.calls == 1
+    assert dash.open_alert_ids == (5,)  # no second "NOT IN VIEW" alert left behind for #1
+    dash.handle_key(ord("c"))
+    rows = read_log(dash)
+    assert [(r["track_id"], r["response"], r["earlier_track_ids"]) for r in rows] == [("5", CONFIRMED, "1")]
+
+
+def test_id_change_after_confirming_does_not_alarm_again(dash, sound):
+    drive_real_analyzer(dash, falling_person([(9.0, 5)]), duration=15, keys=[(8.5, "c")])
+    assert dash.alert_count == 1
+    assert sound.calls == 1
+    assert dash.open_alert_ids == ()
+    assert [(r["track_id"], r["response"]) for r in read_log(dash)] == [("1", CONFIRMED)]
+
+
+def test_repeated_id_changes_keep_one_alert(dash, sound):
+    drive_real_analyzer(dash, falling_person([(9.0, 5), (11.0, 9), (13.0, 12)]), duration=16)
+    assert (dash.alert_count, sound.calls, dash.open_alert_ids) == (1, 1, (12,))
+    assert read_log(dash)[0]["earlier_track_ids"] == "1;5;9"
+
+
+def test_id_change_after_a_false_alarm_stays_answered(dash, sound):
+    drive_real_analyzer(dash, falling_person([(9.0, 5), (12.0, 8)]), duration=15, keys=[(8.0, "f")])
+    assert (dash.alert_count, sound.calls, dash.open_alert_ids) == (1, 1, ())
+
+
+def test_new_id_with_matching_since_but_no_box_still_continues(dash, sound):
+    """Matching on `since` alone works too, e.g. for an alert sent with no skeleton on screen."""
+    def update(t, track_id, people=True):
+        u = make_update(t, {track_id: S.POSSIBLE_FALL} if people else {})
+        return StatusUpdate(u.pose, (PersonStatus(track_id, S.POSSIBLE_FALL, 0.9, "down", 3.25),),
+                            u.frame, u.annotated, u.fps)
+    dash.process(update(4.0, 1))
+    dash.process(update(5.0, 6, people=False))
+    assert (dash.alert_count, sound.calls, dash.open_alert_ids) == (1, 1, (6,))
+
+
+def test_two_people_falling_together_get_two_alerts(dash, sound):
+    """Both IDs are on screen at once, so neither can be a renamed copy of the other."""
+    left = moving_body(FALL_ANGLE, FALL_HIPS, track_id=1, hip_x=200.0)
+    right = moving_body(FALL_ANGLE, FALL_HIPS, track_id=2, hip_x=450.0)
+    drive_real_analyzer(dash, lambda t: [left(t), right(t)], duration=10)
+    assert dash.open_alert_ids == (1, 2)
+    assert sound.calls == 2
+
+
+def test_new_fall_elsewhere_is_a_new_alert(dash, sound):
+    """A different person (different since, no box overlap) is not merged into an open alert."""
+    dash.process(make_update(0.0, {1: S.POSSIBLE_FALL}))
+    far_away = make_update(1.0, {})
+    far_away = StatusUpdate(
+        PoseFrame(1.0, 640, 480, (PersonPose(3, stick_figure(500, 88.0), (450.0, 380.0, 630.0, 440.0), 0.9),)),
+        (PersonStatus(3, S.POSSIBLE_FALL, 0.9, "down", 0.5),), far_away.frame, far_away.annotated, 10.0)
+    dash.process(far_away)
+    assert dash.open_alert_ids == (1, 3)
+    assert sound.calls == 2
+
+
+def test_old_lost_track_is_not_matched_after_continuation_window(dash, sound):
+    dash.process(make_update(0.0, {1: S.POSSIBLE_FALL}))
+    dash.process(make_update(30.0, {}))  # #1 gone for 30 s, alert still open as NOT IN VIEW
+    dash.process(make_update(31.0, {7: S.POSSIBLE_FALL}))  # same box, but far too late to be an ID change
+    assert dash.open_alert_ids == (1, 7)
 
 
 # ----- keys and drawing -----------------------------------------------------------------------------------------

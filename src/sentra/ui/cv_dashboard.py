@@ -16,7 +16,7 @@ from __future__ import annotations
 import csv
 import logging
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -34,6 +34,11 @@ UNCERTAIN_MAX_CONFIDENCE = 0.5  # plan Section 6.3, uncertain_confidence_max
 MIN_KEYPOINT_CONF = 0.5         # skeleton lines are drawn only between keypoints at least this confident
 FORGET_AFTER_S = 10.0           # drop per-person memory for tracks not seen this long (unless an alert is open)
 NOTICE_S = 4.0                  # how long a short notice ("logged as false alarm") stays on screen
+# A new track ID whose first status is already POSSIBLE_FALL may be the same fallen person under a new ID
+# (ByteTrack re-assigns IDs when a detection flickers; the analyzer hands the old history over, plan 6.2 item 1).
+CONTINUATION_S = 10.0           # the old ID must have been seen this recently (analyzer's lost_memory_s)
+CONTINUATION_IOU = 0.3          # or its last box must overlap this much (analyzer's lost_match_iou)
+SAME_SINCE_TOLERANCE = 1e-6     # the analyzer copies `since` exactly when it hands a track over
 
 # Layout, in pixels
 MAX_VIDEO_W, MAX_VIDEO_H = 960, 540
@@ -120,6 +125,8 @@ class Alert:
     opened_at: float        # pose timestamp (time.perf_counter() clock) when the alert opened
     opened_wall: datetime   # wall-clock time, for the CSV
     opened_reason: str = "" # why it fired, for the CSV (the latest reason may be "getting up")
+    since: float = 0.0      # the analyzer's `since` for this POSSIBLE_FALL, used to recognise a renamed track
+    earlier_ids: list[int] = field(default_factory=list)  # IDs this person had before a track ID change
 
     def __post_init__(self) -> None:
         self.opened_reason = self.opened_reason or self.reason
@@ -132,7 +139,8 @@ class Alert:
 class AlertLog:
     """Writes one row per alert, never images, to <output_dir>/alerts_<YYYYmmdd_HHMMSS>.csv."""
 
-    COLUMNS = ("alert_time", "track_id", "reason", "response", "response_time", "seconds_to_response", "confidence")
+    COLUMNS = ("alert_time", "track_id", "reason", "response", "response_time", "seconds_to_response", "confidence",
+               "earlier_track_ids")
 
     def __init__(self, output_dir: Path = DEFAULT_OUTPUT_DIR) -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -156,6 +164,7 @@ class AlertLog:
             response_wall.isoformat(timespec="seconds"),
             f"{seconds_to_response:.1f}",
             f"{alert.confidence:.2f}",
+            ";".join(str(i) for i in alert.earlier_ids),
         ])
         self._file.flush()
 
@@ -185,6 +194,8 @@ class CvDashboard:
         self._open: dict[int, Alert] = {}            # insertion order = oldest first
         self._last_status: dict[int, PersonStatus] = {}
         self._last_seen: dict[int, float] = {}
+        self._last_box: dict[int, tuple[float, float, float, float]] = {}
+        self._answered: dict[int, float] = {}        # track_id -> `since` of a fall already answered (c/f)
         self._now = 0.0
         self._notice: tuple[str, tuple[int, int, int], float] | None = None
         self._stop = False
@@ -241,21 +252,70 @@ class CvDashboard:
     def process(self, update: StatusUpdate) -> None:
         """Open, update and auto-resolve alerts from this frame's statuses."""
         self._now = update.pose.timestamp
+        boxes = {person.track_id: person.box for person in update.pose.people}
+        present = {status.track_id for status in update.statuses}
         for status in update.statuses:
             track_id = status.track_id
             previous = self._last_status.get(track_id)
+            if previous is None and status.state == PostureState.POSSIBLE_FALL:
+                self._continue_renamed_track(status, boxes.get(track_id), present)
             self._last_status[track_id] = status
             self._last_seen[track_id] = self._now
+            if track_id in boxes:
+                self._last_box[track_id] = boxes[track_id]
             alert = self._open.get(track_id)
             if status.state == PostureState.POSSIBLE_FALL:
                 if alert is not None:
                     alert.reason, alert.confidence = status.reason, status.confidence
+                elif track_id in self._answered:
+                    pass  # this fall was already checked by a human; don't alarm again
                 elif previous is None or previous.state != PostureState.POSSIBLE_FALL:
                     self._open_alert(status)
-            elif alert is not None and status.state == PostureState.UPRIGHT:
-                # Back on their feet before anyone answered. UNKNOWN or out of view keeps the alert open.
-                self._resolve(track_id, RECOVERED)
+            else:
+                self._answered.pop(track_id, None)  # out of POSSIBLE_FALL: a later one is a new fall
+                if alert is not None and status.state == PostureState.UPRIGHT:
+                    # Back on their feet before anyone answered. UNKNOWN or out of view keeps the alert open.
+                    self._resolve(track_id, RECOVERED)
         self._forget_stale_tracks()
+
+    def _continue_renamed_track(
+        self, status: PersonStatus, box: tuple[float, float, float, float] | None, present: set[int]
+    ) -> None:
+        """A new track ID whose first status is POSSIBLE_FALL: if it's a fallen person we already know under an
+        older ID (same `since`, or a recent box that overlaps), move their open or answered alert to the new ID
+        instead of raising a second alert for the same fall."""
+        new_id = status.track_id
+        best_id, best_score = None, 0.0
+        for old_id in (*self._open, *self._answered):
+            if old_id == new_id or old_id in present:
+                continue  # still on screen, so a different person
+            if self._now - self._last_seen.get(old_id, float("-inf")) > CONTINUATION_S:
+                continue
+            old_since = self._open[old_id].since if old_id in self._open else self._answered[old_id]
+            if abs(old_since - status.since) <= SAME_SINCE_TOLERANCE:
+                score = 2.0  # exact hand-over from the analyzer beats any box overlap
+            elif box is not None and old_id in self._last_box:
+                score = box_iou(box, self._last_box[old_id])
+                if score < CONTINUATION_IOU:
+                    continue
+            else:
+                continue
+            if score > best_score:
+                best_id, best_score = old_id, score
+        if best_id is None:
+            return
+
+        if best_id in self._open:
+            # Same alert, new ID: keep its place in the queue, no new CSV row and no new sound.
+            alert = self._open[best_id]
+            alert.earlier_ids.append(best_id)
+            alert.track_id = new_id
+            self._open = {(new_id if tid == best_id else tid): a for tid, a in self._open.items()}
+            self._show_notice(f"Person #{best_id} is now tracked as #{new_id} (same alert)", WHITE)
+            log.info("Track #%d is now #%d; kept the same open alert", best_id, new_id)
+        else:
+            self._answered[new_id] = self._answered.pop(best_id)
+            log.info("Track #%d is now #%d; its fall was already answered", best_id, new_id)
 
     def handle_key(self, key: int) -> None:
         """React to a key code from cv2.waitKey (-1 means no key)."""
@@ -276,7 +336,8 @@ class CvDashboard:
             self._resolve(oldest, CONFIRMED if char == "c" else FALSE_ALARM)
 
     def _open_alert(self, status: PersonStatus) -> None:
-        alert = Alert(status.track_id, status.reason, status.confidence, self._now, datetime.now())
+        alert = Alert(status.track_id, status.reason, status.confidence, self._now, datetime.now(),
+                      since=status.since)
         self._open[status.track_id] = alert
         self.alert_count += 1
         log.warning(
@@ -289,6 +350,8 @@ class CvDashboard:
     def _resolve(self, track_id: int, response: str) -> None:
         alert = self._open.pop(track_id)
         self._log.write(alert, response, datetime.now(), self._now - alert.opened_at)
+        if response in (CONFIRMED, FALSE_ALARM):
+            self._answered[track_id] = alert.since  # remembered while they're still down, even under a new ID
         log.info("Alert for person #%d logged as %s", track_id, response)
         if response == CONFIRMED:
             self._show_notice(f"Person #{track_id}: logged as CONFIRMED (needed help)", WHITE)
@@ -302,6 +365,8 @@ class CvDashboard:
             if self._now - seen > FORGET_AFTER_S and track_id not in self._open:
                 del self._last_seen[track_id]
                 self._last_status.pop(track_id, None)
+                self._last_box.pop(track_id, None)
+                self._answered.pop(track_id, None)
 
     def _show_notice(self, text: str, color: tuple[int, int, int]) -> None:
         self._notice = (text, color, self._now + NOTICE_S)
@@ -457,6 +522,8 @@ class CvDashboard:
         tags = []
         if status.track_id in self._open:
             tags.append(("ALERT OPEN", RED, WHITE))
+        elif status.track_id in self._answered and status.state == PostureState.POSSIBLE_FALL:
+            tags.append(("CHECKED", GREY, BLACK))
         if status.state == PostureState.POSSIBLE_FALL and status.confidence <= UNCERTAIN_MAX_CONFIDENCE:
             tags.append(("UNCERTAIN", YELLOW, BLACK))
         if not in_view:
@@ -484,6 +551,15 @@ def draw_skeletons(
                 cv2.line(view, tuple(pts[a]), tuple(pts[b]), color, 3, cv2.LINE_AA)
         for i in np.flatnonzero(visible):
             cv2.circle(view, tuple(pts[i]), 4, WHITE, -1, cv2.LINE_AA)
+
+
+def box_iou(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
+    """Intersection over union of two (x1, y1, x2, y2) boxes, 0..1."""
+    iw = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    ih = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = iw * ih
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
 
 
 def fit_text(text: str, max_width: int, scale: float, thickness: int = 1) -> str:
