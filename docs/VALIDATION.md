@@ -31,7 +31,8 @@ Laptop: Windows 11 Home, CPU only. Model `yolo26n.pt`, `--imgsz 640`, ByteTrack 
 | 2026-11-06 | Synthetic 15 fps clip from Ultralytics `bus.jpg` (panning) | Claude | 179 / 12.0 | 14.9 (clip-limited) | 29.5 | 29.7 | 5 | 0 | `--repeat-after 4`. Pipeline smoke test, not a real scene |
 | 2026-11-06 | Laptop webcam, Babar moving around | Babar | 1689 / 66.4 | 25.4 | 29.7 | 44.1 | 18 | 0 | Cues included person left/ahead/right, "TV" (a screen), "Possible obstacle ahead." ×1 |
 | 2026-11-06 | Laptop webcam, voice check | Babar | 1247 / 49.5 | 25.2 | 29.2 | 39.2 | 16 | 0 | Babar heard the cues; directions matched the screen. "Possible obstacle ahead." ×2. Gaps between cues 2.5–5.3 s while moving (chatty, see Section 5) |
-| | iPhone (DroidCam) | Babar | | | | | | | |
+| 2026-11-06 | iPhone 14 Pro Max, DroidCam over campus eduroam, landscape image but phone in portrait (sideways) | Babar | 1490 / 52.0 | 28.7 | 27 | 39 | 15 | 0 | Stream fine but the picture was sideways, so directions weren't meaningful: rerun with `--rotate 90` |
+| 2026-11-06 | iPhone 14 Pro Max, DroidCam over eduroam, portrait, `--rotate 90` | Babar | 1323 / 56.1 | 23.6 | 26.8 | 42.9 | 15 | 0 | ✅ Upright; Babar confirmed cues and directions. Chair announced ahead, left and right; people incl. "2 people ahead/left/right"; "Possible obstacle ahead." ×1; "TV to your left." ×1 |
 | | Android (IP Webcam) | Iesa | | | | | | | |
 | | `src/guide_bench.py` at 640 / 480 / 320 | Iesa | | | | | | | |
 
@@ -40,10 +41,11 @@ Laptop: Windows 11 Home, CPU only. Model `yolo26n.pt`, `--imgsz 640`, ByteTrack 
 | Date | Phone | App / connection | Orientation | Result |
 | --- | --- | --- | --- | --- |
 | 2026-11-06 | Laptop webcam | built-in | n/a | ✅ Cues heard, directions correct (Babar) |
-| 2026-11-06 | Babar, iPhone 14 Pro Max | DroidCam PC Webcam, iPhone hotspot | landscape + portrait | ✅ with the fall app (`src/main.py`). ⏳ not yet with `src/guide.py` |
+| 2026-11-06 | Babar, iPhone 14 Pro Max | DroidCam PC Webcam, iPhone hotspot | landscape + portrait | ✅ with the fall app (`src/main.py`) |
+| 2026-11-06 | Babar, iPhone 14 Pro Max | DroidCam PC Webcam, **campus eduroam** (phone's Wi-Fi IP, port 4747) | portrait + `--rotate 90` | ✅ Sentra Guide: cues heard, directions correct. Without `--rotate` the picture is sideways |
 | | Iesa, Android (model: ____) | IP Webcam | | ⏳ |
 | | Swechha, iPhone (model: ____, LiDAR: ____) | DroidCam | | ⏳ |
-| | Disconnect test: phone stream stopped 10 s, then restarted | | | ⏳ |
+| | Disconnect test: phone stream stopped 10 s, then restarted | | | ⏳ Not done yet (2026-11-06 runs ended with q, no disconnect) |
 
 ## 4. Depth error (only if a depth adapter exists)
 

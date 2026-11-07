@@ -69,7 +69,7 @@ Priorities: **P0** = needed for the demo, **P1** = makes it clearly better, **P2
 
 **Today (Fri night)**
 1. **P0** Review and merge the pivot PR once Iesa or Swechha has approved it (`schema.py` is new, so ideally both).
-2. **P0** Run Sentra Guide on the iPhone: DroidCam *PC Webcam*, laptop on the iPhone hotspot,
+2. ✅ **Done 2026-11-06** (portrait + `--rotate 90`, over eduroam; results in VALIDATION.md). Run Sentra Guide on the iPhone: DroidCam *PC Webcam*, laptop on the iPhone hotspot,
    `python src/guide.py --source "http://172.20.10.1:4747/video"` (landscape), then portrait with `--rotate 90`.
    *Accept:* boxes upright; a chair in the middle → "Chair ahead."; moved left → "Chair to your left."; heard on the laptop.
    Record it in VALIDATION.md, Section 3.

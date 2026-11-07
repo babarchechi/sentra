@@ -78,29 +78,34 @@ Directions are from the camera's point of view. With the webcam facing you, your
 
 ## 6. Phone as the camera
 
-**Network:** campus Wi-Fi (eduroam) usually blocks phone-to-laptop connections. **Connect the laptop to the phone's
-own hotspot.** That also keeps the stream private. Before running Sentra, open the stream URL in a browser to check
+**Network:** on 2026-11-06 the iPhone stream worked over **campus eduroam** using the "WiFi IP" DroidCam shows
+(phone and laptop were on different 10.x subnets). Other networks, including eduroam at other times or places, may
+block it. The phone's **own hotspot** is the reliable fallback and is more private: on a campus network, other devices
+that can reach the phone could open the stream too. Before running Sentra, open the stream URL in a browser to check
 it, then **close that tab**: these apps usually serve one viewer at a time.
 
 ### iPhone: Babar's 14 Pro Max, Swechha's iPhone (DroidCam)
 
-Tested 2026-11-06 with the fall-detection app (`src/main.py`), landscape and portrait. Sentra Guide uses the same camera
-code, but **hasn't been run on the iPhone yet** (TEAM_PLAN.md, Babar task 2).
+Tested 2026-11-06 with Sentra Guide on Babar's iPhone 14 Pro Max: phone in portrait + `--rotate 90`, over eduroam,
+24–29 fps, ~40 ms capture-to-decision, cues and directions confirmed. (Also tested earlier with the fall app over the
+iPhone hotspot.)
 
 1. Install **DroidCam** from the App Store and choose **PC Webcam**. Ignore the prompt to install the Windows client;
    it isn't needed.
-2. iPhone: Settings → Personal Hotspot → on, with **Maximize Compatibility**. Connect the laptop to it.
+2. Either put the laptop on the same Wi-Fi as the phone (worked on eduroam), or turn on the iPhone's Personal Hotspot
+   with **Maximize Compatibility** and connect the laptop to it.
 3. Keep DroidCam **on screen**, with Auto-Lock off (Settings → Display & Brightness). iOS pauses the camera in the
    background.
 4. Run:
 
    ```powershell
-   python src/guide.py --source "http://172.20.10.1:4747/video"              # landscape
-   python src/guide.py --source "http://172.20.10.1:4747/video" --rotate 90  # portrait
+   python src/guide.py --source "http://<WiFi IP DroidCam shows>:4747/video" --rotate 90  # phone upright (portrait)
+   python src/guide.py --source "http://172.20.10.1:4747/video" --rotate 90               # same, on the iPhone hotspot
    ```
 
-   `172.20.10.1` is the iPhone's address on its own hotspot. On another network, use the "Wi-Fi IP" DroidCam shows.
-   The free DroidCam stream is 640×480 MJPEG.
+   Drop `--rotate 90` if you hold the phone in landscape. **Holding it upright without `--rotate 90` gives a sideways
+   picture** (seen 2026-11-06), and then left/right are meaningless. `172.20.10.1` is the iPhone's address on its own
+   hotspot. The free DroidCam stream is 640×480 MJPEG.
 
 ### Android: Iesa (IP Webcam)
 
