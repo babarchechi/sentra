@@ -569,8 +569,30 @@ scenario 5 times:
 | 8 | Two people, one does #6 | Alert for that person's ID only |
 | 9 | Walk partly out of frame / behind a chair | No alert (note what happens) |
 
-Record in `docs/evaluation.md`: for each scenario, how many correct alerts, false alarms and misses, plus fps and any
-odd behaviour. These numbers go in the pitch, and honest numbers beat "it works".
+**How to record and score it:**
+
+1. **Start each run labelled with its scenario number.** Run once per attempt, and press `q` after each:
+
+   ```powershell
+   python src/main.py --source 0 --scenario 6
+   ```
+
+   This writes `outputs/transitions_<time>_s6.csv`. Use the same `--source` and `--rotate` for every run.
+2. **Build the table:**
+
+   ```powershell
+   python src/eval_report.py
+   ```
+
+   It prints the filled-in table: runs, correct alerts, false alarms and misses per scenario, the median time from
+   drop to alert, and a one-line summary for the pitch.
+3. **Paste the output into `docs/evaluation.md`,** and add fps and anything odd you noticed.
+
+How it scores runs: in scenarios 6 and 8, a run counts as a correct alert if someone reaches `POSSIBLE_FALL`, and as a
+miss if nobody does. In scenario 8, anyone flagged besides the one faller is a false alarm. In every other scenario,
+each person flagged is a false alarm. Runs recorded without `--scenario` are skipped.
+
+These numbers go in the pitch, and honest numbers beat "it works".
 
 ## 12. Ground rules
 
