@@ -1,5 +1,9 @@
 # Sentra — Phase 1 Team Plan
 
+> **Archived (2026-11-06):** the team pivoted to **Sentra Guide**. The current plan is
+> [TEAM_PLAN.md](TEAM_PLAN.md) (why: [PIVOT.md](PIVOT.md)). This file describes the fall-detection app, which still
+> runs with `python src/main.py`. Its Git workflow rules (Section 9) still apply.
+
 > Capital Hacks 5.0 · Fri Nov 6 – Sun Nov 8, 2026
 > Read this whole file once, then jump to **your track**. If anything here is unclear or wrong, say so in the team
 > chat before building around it.

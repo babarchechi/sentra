@@ -156,3 +156,45 @@ def test_close_stops_reader_thread(make_source):
     assert not src._thread.is_alive()
     assert src.read(timeout=0.5) == (False, None, 0.0)
     src.close()  # second close is harmless
+
+
+# Video files (consented recordings) --------------------------------------------------------------------
+
+class FileCapture:
+    def __init__(self, frames, fps):
+        self.remaining, self.fps = frames, fps
+
+    def get(self, prop):
+        return self.fps
+
+    def read(self):
+        if self.remaining <= 0:
+            return False, None
+        self.remaining -= 1
+        return True, np.zeros((4, 4, 3), np.uint8)
+
+    def release(self):
+        pass
+
+
+def test_video_file_plays_at_its_frame_rate_then_ends_without_reconnecting(tmp_path, monkeypatch):
+    clip = tmp_path / "private" / "clip.mp4"
+    clip.parent.mkdir()
+    clip.write_bytes(b"not really a video")
+    opens = []
+    monkeypatch.setattr(capture, "_open_capture", lambda s: opens.append(s) or FileCapture(5, fps=20.0))
+    source = FrameSource(str(clip))
+    try:
+        assert source.is_file and source.description == "clip.mp4"  # no folder names in logs
+        stamps = []
+        while True:
+            ok, _, ts = source.read(timeout=1.0)
+            if not ok:
+                break
+            stamps.append(ts)
+        assert len(stamps) == 5 and source.ended
+        assert stamps[-1] - stamps[0] == pytest.approx(4 / 20.0, abs=0.04)  # paced, not decoded flat out
+        assert len(opens) == 1
+    finally:
+        source.close()
+    assert describe_source("phone") == "phone"
