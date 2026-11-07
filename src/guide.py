@@ -74,8 +74,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Don't give danger warnings. By default something big in the middle of the view gets "
                              "'Caution, chair ahead.' (said first, repeated every --caution-every s while it stays, "
                              "and the phone page vibrates). There is never a 'safe' signal")
-    parser.add_argument("--caution-every", type=float, default=5.0,
-                        help="Seconds between repeats of a caution while the thing stays in the way (default 5)")
+    parser.add_argument("--caution-every", type=float, default=2.0,
+                        help="Seconds between repeats of a caution while the thing stays in the way (default 2: it "
+                             "keeps cautioning until the thing is no longer in the way)")
     parser.add_argument("--voice", choices=("windows", "print", "off"), default="windows",
                         help="windows: laptop's built-in voice; print: console only; off: no speech")
     parser.add_argument("--muted", action="store_true", help="Start muted (press m in the window to unmute)")

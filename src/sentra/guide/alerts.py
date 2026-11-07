@@ -91,7 +91,8 @@ class AlertConfig:
     max_frame_age_s: float = 1.0
     labels: frozenset[str] | None = field(default=DEFAULT_ANNOUNCE_LABELS)  # None = every class
     caution: bool = True                    # warn "Caution, ... ahead." about big things in the way
-    caution_repeat_after_s: float = 5.0     # repeat a caution this often while the thing stays in the way
+    caution_repeat_after_s: float = 2.0     # keep repeating a caution this often while the thing stays in the way
+                                            # (about as fast as "Caution, chair ahead." can be said)
     caution_min_gap_s: float = 1.0          # a caution may follow any earlier cue after this long
 
     def __post_init__(self) -> None:
