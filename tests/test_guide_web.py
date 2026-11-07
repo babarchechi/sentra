@@ -125,7 +125,7 @@ def test_serves_the_page_with_strict_headers(page):
     response, body, conn = get(page, "/")
     conn.close()
     assert response.status == 200
-    assert b"Tap to turn on sound" in body
+    assert b"Turn sound on" in body
     assert b"Not a navigation aid" in body
     csp = response.getheader("Content-Security-Policy")
     assert "default-src 'self'" in csp and "img-src 'none'" in csp and "media-src 'none'" in csp

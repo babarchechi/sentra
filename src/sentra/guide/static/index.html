@@ -17,18 +17,15 @@
 
     <p id="connection" class="connection connection--wait" role="status">Connecting to the laptop…</p>
 
-    <button id="enable" class="big-button" type="button">Tap to turn on sound</button>
+    <button id="enable" class="big-button" type="button">Turn sound on</button>
+    <button id="voice" class="toggle" type="button" aria-pressed="true" hidden>Voice: on</button>
     <p id="no-speech" class="warning" hidden>This browser can't speak. Cues are shown as text only.</p>
 
     <section class="cue" aria-labelledby="cue-heading">
-      <h2 id="cue-heading" class="visually-hidden">Latest cue</h2>
+      <h2 id="cue-heading" class="cue__label">Latest cue</h2>
       <p id="cue" class="cue__text" aria-live="polite" aria-atomic="true">Waiting for the first cue…</p>
       <p id="cue-age" class="cue__age"></p>
     </section>
-
-    <div class="controls">
-      <button id="voice" class="toggle" type="button" aria-pressed="true" hidden>Voice: on</button>
-    </div>
 
     <p id="laptop" class="laptop" role="status"></p>
 

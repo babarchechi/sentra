@@ -77,10 +77,11 @@ function applyStatus(status) {
   state.laptopMuted = Boolean(status.muted);
   const parts = [];
   if (typeof status.fps === "number") parts.push(`${status.fps.toFixed(0)} fps`);
-  if (status.depth_status) parts.push(status.depth_status);
+  // "Distance: off (camera only)" -> "Distance off"
+  if (status.depth_status) parts.push(status.depth_status.replace(": ", " ").replace(/\s*\(.*\)$/, ""));
   if (state.laptopMuted) parts.push("Muted on the laptop (m): cues shown, not spoken");
   if (status.stale) parts.push("Camera frames are delayed");
-  els.laptop.textContent = parts.length ? `Laptop: ${parts.join(" · ")}` : "";
+  els.laptop.textContent = parts.length ? `Laptop · ${parts.join(" · ")}` : "";
   updateLiveRegion(); // muting on the laptop stops this page speaking, so screen readers must take over
 }
 
@@ -105,7 +106,7 @@ function addRecent(alert, earlier) {
   const time = document.createElement("time");
   const now = new Date();
   time.dateTime = now.toISOString();
-  time.textContent = earlier ? "earlier" : now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  time.textContent = earlier ? "Earlier" : now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
   item.append(time, document.createTextNode(alert.text));
   if (earlier) item.className = "earlier";
   els.recent.prepend(item);
