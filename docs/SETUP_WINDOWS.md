@@ -143,6 +143,6 @@ See [DEPTH_OPTIONS.md](DEPTH_OPTIONS.md). Nothing about depth is needed for the 
 | Left/right seem wrong | Make sure the image is upright (`--rotate`). With a webcam facing you, directions are mirrored relative to you |
 | Talks too much | `--repeat-after 20 --min-gap 4`, or press **m**. Report what was noisy in VALIDATION.md |
 | "LAGGING" on screen, or low fps | Try `--imgsz 480`. Close other heavy apps. A stale frame never triggers a cue |
-| "Waiting for frames from the camera..." | The stream stalled. It reconnects automatically with backoff (1, 2, 4, then every 5 s) |
+| "Waiting for frames from the camera..." | The stream stalled. It reconnects automatically with backoff (1, 2, 4, then every 5 s). Each attempt on an unreachable stream takes ~14 s, so after a 10 s outage recovery took 9 s in testing and can take up to ~20 s. Keep the app running |
 | `yolo26n.pt` download fails | You're offline. Download it once while online (Section 2) |
 | Project inside OneDrive is slow | Keep the venv outside OneDrive (Section 1) |

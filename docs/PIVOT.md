@@ -33,7 +33,7 @@ process with an OpenCV window.
 | iPhone camera → laptop (DroidCam "PC Webcam" MJPEG) | ✅ Verified with the fall app over the iPhone hotspot, and with **Sentra Guide over eduroam** (portrait, `--rotate 90`) on 2026-11-06 | docs/evaluation.md, VALIDATION.md: 24–29 fps, cues and directions confirmed by Babar |
 | Android camera → laptop (IP Webcam) | ⏳ Not verified | evaluation.md still says "pending" |
 | Windows camera API source (`windows:<name>`, Phone Link) | 🧪 Partly | `windows:HP 5MP` worked (iesa242); Phone Link only showed a spinner |
-| Automatic reconnect on a real phone stream | ⏳ Not verified | covered by fake-camera tests only |
+| Automatic reconnect on a real phone stream | 🟡 Partly verified | 2026-11-06: simulated 10 s cut between the app and the iPhone stream; reconnected 9 s after it returned. Not yet tested by closing DroidCam itself |
 | YOLO26n-Pose + ByteTrack, multi-person IDs | ✅ Verified | webcam + iPhone, 2026-11-06 |
 | Fall state machine (`posture.py`) and dashboard (`ui/`) | ✅ Unit-tested, merged | 116 tests. A full live evaluation session (docs/evaluation.md) was not run. |
 | **YOLO26n object detection (`yolo26n.pt`)** | ✅ Verified (new) | sample image: bus + 4 people found, ~29 ms/frame on CPU after warm-up |

@@ -45,7 +45,8 @@ Laptop: Windows 11 Home, CPU only. Model `yolo26n.pt`, `--imgsz 640`, ByteTrack 
 | 2026-11-06 | Babar, iPhone 14 Pro Max | DroidCam PC Webcam, **campus eduroam** (phone's Wi-Fi IP, port 4747) | portrait + `--rotate 90` | ✅ Sentra Guide: cues heard, directions correct. Without `--rotate` the picture is sideways |
 | | Iesa, Android (model: ____) | IP Webcam | | ⏳ |
 | | Swechha, iPhone (model: ____, LiDAR: ____) | DroidCam | | ⏳ |
-| | Disconnect test: phone stream stopped 10 s, then restarted | | | ⏳ Not done yet (2026-11-06 runs ended with q, no disconnect) |
+| 2026-11-06 | Disconnect test, **simulated on the laptop**: a relay between the app and Babar's iPhone stream cut the connection and refused new ones for 10 s | DroidCam over eduroam, via `127.0.0.1` relay | portrait + `--rotate 90` | ✅ No crash. Outage noticed within 1 s; **reconnected 9 s after the stream came back** (19 s after the cut); frames resumed at full rate. ⚠ Each failed reopen attempt took ~14 s, so recovery can take 10–20 s. No new cues after the reconnect (likely nothing new in view; not checked) |
+| | Disconnect test on the phone itself (close DroidCam 10 s) and Wi-Fi dropping out (no clean disconnect) | | | ⏳ Not tested |
 
 ## 4. Depth error (only if a depth adapter exists)
 

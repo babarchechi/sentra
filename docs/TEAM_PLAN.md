@@ -73,7 +73,8 @@ Priorities: **P0** = needed for the demo, **P1** = makes it clearly better, **P2
    `python src/guide.py --source "http://172.20.10.1:4747/video"` (landscape), then portrait with `--rotate 90`.
    *Accept:* boxes upright; a chair in the middle → "Chair ahead."; moved left → "Chair to your left."; heard on the laptop.
    Record it in VALIDATION.md, Section 3.
-3. **P0** Disconnect test (demo step 7): stop the DroidCam stream for 10 s, restart it.
+3. 🟡 **Partly done 2026-11-06** (simulated cut on the laptop: reconnected 9 s after the stream returned; see VALIDATION.md).
+   Still to do on the phone itself. **P0** Disconnect test (demo step 7): stop the DroidCam stream for 10 s, restart it.
    *Accept:* no crash, "Reconnected" in the terminal, cues resume. Record it either way.
 
 **Next (Sat morning)**
