@@ -48,10 +48,11 @@ Directions are from the camera's point of view.
 
 Run with `python src/guide.py --source 0 --obstacles indoor` (replace `0` with your phone stream URL if needed).
 With obstacle scanning enabled, a wall covering the central view produces repeated
-**"Caution, possible obstacle ahead."**, even when no floor is visible. If the image stays nearly uniform and
-the scanner cannot find usable floor evidence, it repeats **"Caution, view unclear."** instead. This includes
+**"Caution, possible obstacle ahead."**, even when no floor is visible. If the image stays low in texture and
+the scanner cannot find usable floor evidence, it repeats **"Caution, camera can't see."** instead. This includes
 plain surfaces the model fails to recognise, dark/covered lenses and featureless ceilings; it does not identify
-all of them as walls. Both use the existing caution interval (default two seconds, `--caution-every`).
+all of them as walls. The texture check tolerates gradual lighting gradients on a plain surface.
+Both use the existing caution interval (default two seconds, `--caution-every`).
 
 Scans must confirm the condition before speaking; fresh contrary evidence stops the warning and stale scans
 cannot keep it alive. Wall coverage is not measured distance. These rules have automated tests, but still need

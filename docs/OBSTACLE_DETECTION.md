@@ -68,8 +68,10 @@ given (indoor = ADE20K, outdoor = Cityscapes).
      by announceable objects: confirm in 2 of the last 3 assessed scans, then feed a full-height central candidate
      to the existing caution policy. This does not require visible floor. Say "Caution, possible obstacle ahead."
      every two seconds while confirmed, fresh wall evidence persists. Wall coverage is not distance.
-   - Nearly uniform image (spatial standard deviation at most 5 on every 0–255 colour channel), with too little
-     floor evidence and no qualifying wall: independently confirm across scans and repeat "Caution, view unclear."
+   - Low-texture image (per-channel RMS residual at most 5 on the 0–255 scale after subtracting a Gaussian blur
+     with sigma 3 at scan resolution), with too little floor evidence and no qualifying wall: independently
+     confirm across scans and repeat "Caution, camera can't see." Gradual lighting gradients are tolerated;
+     sharp edges and random texture retain residual energy.
      This can be a plain surface, covered lens or featureless ceiling. It is a visibility warning, not object recognition.
    - The two conditions have separate confirmation histories from floor obstacles. Reusing a scan does not count
      again; reset or a gap longer than the scan freshness limit clears history. New contrary evidence stops cues.

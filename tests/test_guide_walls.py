@@ -134,7 +134,7 @@ def test_uniform_unrecognised_view_keeps_warning_then_recovers(colour):
             assert not f.detections
         alerts.extend(policy.update(spatial.locate(f), f))
     assert len(alerts) == 3
-    assert all(a.text == "Caution, view unclear." and a.caution and a.meters is None for a in alerts)
+    assert all(a.text == "Caution, camera can't see." and a.caution and a.meters is None for a in alerts)
     assert all(a.label == VIEW_UNCLEAR for a in alerts)
     # A textured ceiling is unjudgeable, but no longer a featureless-camera warning.
     clock.now = 6.0
@@ -146,6 +146,47 @@ def test_single_featureless_scan_cannot_confirm_over_reused_frames():
     s = scanner(np.full((H, W), CEILING, np.uint8))
     s.submit(np.zeros_like(IMAGE), 0.0)
     for _ in range(20):
+        assert not s.augment(frame()).detections
+
+
+@pytest.mark.parametrize("shape", [(480, 640), (640, 480)])
+@pytest.mark.parametrize("lighting", ["horizontal", "vertical", "curved"])
+def test_smooth_lighting_gradient_repeats_visibility_warning(shape, lighting):
+    h, w = shape
+    x, y = np.meshgrid(np.linspace(0, 1, w), np.linspace(0, 1, h))
+    values = {"horizontal": 100 + 50 * x, "vertical": 100 + 50 * y,
+              "curved": 80 + 100 * (x * x + y * y) / 2}[lighting]
+    image = np.repeat(values.astype(np.uint8)[:, :, None], 3, axis=2)
+    clock = FakeClock()
+    s = scanner(np.full((H, W), CEILING, np.uint8), clock=clock)
+    policy, spatial, alerts = AlertPolicy(clock=clock), SpatialEstimator(), []
+    for i in range(24):
+        clock.now = i * 0.25
+        s.submit(image, clock.now)
+        f = s.augment(frame(t=clock.now))
+        if i == 0:
+            assert not f.detections
+        alerts.extend(policy.update(spatial.locate(f), f))
+    assert len(alerts) == 3
+    assert all(a.text == "Caution, camera can't see." and a.caution for a in alerts)
+    assert all(b.timestamp - a.timestamp == 2.0 for a, b in zip(alerts, alerts[1:]))
+
+
+@pytest.mark.parametrize("kind", ["noise", "stripes", "colour"])
+def test_textured_view_does_not_trigger_visibility_warning(kind):
+    if kind == "noise":
+        image = np.random.default_rng(0).integers(0, 256, IMAGE.shape, dtype=np.uint8)
+    else:
+        bands = (np.arange(640) // 8 % 2).astype(bool)
+        if kind == "colour":
+            row = np.where(bands[:, None], [255, 0, 0], [0, 0, 255]).astype(np.uint8)
+        else:
+            row = np.repeat((bands * 255).astype(np.uint8)[:, None], 3, axis=1)
+        image = np.broadcast_to(row, IMAGE.shape).copy()
+    s = scanner(np.full((H, W), CEILING, np.uint8))
+    for _ in range(3):
+        s.submit(image, 0.0)
+        assert not s.latest().featureless
         assert not s.augment(frame()).detections
 
 

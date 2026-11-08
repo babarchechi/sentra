@@ -5,6 +5,7 @@ import pytest
 
 from guide_helpers import FakeClock, det, frame
 from sentra.guide.alerts import AlertConfig, AlertPolicy, alert_text, plural
+from sentra.guide.obstacles import VIEW_UNCLEAR, WALL_OBSTACLE, UNKNOWN_OBSTACLE
 from sentra.guide.schema import DepthEstimate, Region
 from sentra.guide.spatial import SpatialEstimator
 
@@ -204,6 +205,19 @@ def test_never_claims_a_path_is_clear_or_safe():
     assert scene.said, "the scene should have produced some alerts"
     for text in scene.texts():
         assert "clear" not in text.lower() and "safe" not in text.lower()
+    # Exercise every synthetic scanner cue through the policy, including both
+    # ordinary wording and repeated cautions. The older object scene omits them.
+    for label in (VIEW_UNCLEAR, WALL_OBSTACLE, UNKNOWN_OBSTACLE):
+        for caution in (False, True):
+            scanner_scene = Scene(AlertConfig(caution=caution))
+            scanner_scene.run(3.0, det(label, height=1.0, width=0.3, conf=0.9))
+            assert scanner_scene.said
+            assert all(a.caution == caution for _, a in scanner_scene.said)
+            for text in scanner_scene.texts():
+                assert "clear" not in text.lower() and "safe" not in text.lower()
+            if label == VIEW_UNCLEAR:
+                expected = "Caution, camera can't see." if caution else "Camera can't see."
+                assert scanner_scene.texts()[0] == expected
 
 
 def test_alert_dict_is_json_ready_and_versioned():
