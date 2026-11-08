@@ -7,7 +7,9 @@ walking-corridor stand-in) each column is scanned from the bottom of the image u
 That height is the column's "free space". See docs/OBSTACLE_DETECTION.md for the feasibility check behind it.
 
 Decisions, per scan:
-- Little floor visible in the lower half of the corridor: "can't judge". Shown on screen, never spoken, never "clear".
+- Wall-labelled pixels fill the central view: confirm across scans and keep cautioning even without visible floor.
+- Nearly featureless image without floor evidence: repeated "Caution, view unclear." (not a wall claim).
+- Otherwise little floor visible in the lower half of the corridor: "can't judge", on screen only.
 - Enough corridor columns where the floor stops close (free space < `near_free` of the image height) and no confident
   YOLO box explains it: a possible obstruction. After 2 of the last 3 scans agree, it is added to the frame as an
   "unknown obstacle" detection, which the alert policy only ever says as "Possible obstacle ahead." (a caution when
@@ -40,6 +42,8 @@ from sentra.guide.schema import Box, Detection, DetectionFrame, Region
 log = logging.getLogger(__name__)
 
 UNKNOWN_OBSTACLE = "unknown obstacle"  # label of the detections this layer adds (never spoken by name)
+WALL_OBSTACLE = "wall obstruction"  # internal provenance; spoken as "possible obstacle", not a distance claim
+VIEW_UNCLEAR = "view unclear"
 
 # environment -> (weights, walkable class names). Stairs and steps are deliberately NOT walkable here.
 ENVIRONMENTS: dict[str, tuple[str, frozenset[str]]] = {
@@ -63,6 +67,9 @@ class ObstacleConfig:
     near_free: float = 0.3           # floor reaching less than this share of the height up the image: close
     min_blocked_share: float = 0.10  # share of corridor columns that must be blocked (a pole is enough)
     min_walkable_share: float = 0.15  # floor needed in the lower half of the corridor, else "can't judge"
+    wall_column_share: float = 0.85  # wall must fill this fraction of BOTH halves of a column
+    wall_corridor_share: float = 0.80  # require broad wall coverage, not a small patch or side wall
+    featureless_std: float = 5.0     # max per-channel spatial std on 0..255 image; visibility warning only
     explain_conf: float = 0.5        # a YOLO box at least this sure explains the columns it covers
     confirm_scans: int = 2           # an obstruction must be found in this many of the last `confirm_window` scans
     confirm_window: int = 3
@@ -82,6 +89,8 @@ class ScanResult:
     blocked: np.ndarray              # per column: corridor column whose floor stops close
     blocker: str                     # most common non-floor class just above the blocking point (screen and log)
     scan_ms: float = 0.0
+    wall_columns: np.ndarray | None = None  # central columns dominated by the semantic wall class
+    featureless: bool = False
 
     def thirds(self, cfg: ObstacleConfig) -> dict[Region, float]:
         """Mean free space in the left, central and right parts (the experimental open-space view; display only)."""
@@ -143,6 +152,8 @@ class ObstacleScanner:
         self._assessed: ScanResult | None = None
         self._latest: ScanResult | None = None
         self._recent: deque[bool] = deque(maxlen=self.config.confirm_window)  # obstruction found, per scan
+        self._wall_recent: deque[bool] = deque(maxlen=self.config.confirm_window)
+        self._unclear_recent: deque[bool] = deque(maxlen=self.config.confirm_window)
         self._thread: threading.Thread | None = None
         self._walkable_ids: np.ndarray | None = None
         self.last: Assessment = Assessment("starting...")
@@ -184,6 +195,8 @@ class ObstacleScanner:
             self._assessed = None
             self._pending, self._latest = None, None
             self._recent.clear()
+            self._wall_recent.clear()
+            self._unclear_recent.clear()
             self.last = Assessment("starting...")
 
     # Feeding frames -----------------------------------------------------------------------------------------
@@ -244,7 +257,9 @@ class ObstacleScanner:
         result = self.load().predict(small, imgsz=cfg.imgsz, verbose=False)[0]
         classes = result.semantic_mask.data
         classes = classes.cpu().numpy() if hasattr(classes, "cpu") else np.asarray(classes)
-        return self.analyse(classes, timestamp, (time.perf_counter() - start) * 1000.0)
+        featureless = bool(np.std(small.astype(np.float32), axis=(0, 1)).max() <= cfg.featureless_std)
+        return replace(self.analyse(classes, timestamp, (time.perf_counter() - start) * 1000.0),
+                       featureless=featureless)
 
     def analyse(self, classes: np.ndarray, timestamp: float, scan_ms: float = 0.0) -> ScanResult:
         """Free space per column, floor coverage and blocked corridor columns, from a class map (H x W ids)."""
@@ -261,7 +276,16 @@ class ObstacleScanner:
         if walkable_share >= cfg.min_walkable_share:
             blocked[a:b] = free[a:b] < cfg.near_free
         blocker = self._blocker(classes, free, blocked)
-        return ScanResult(timestamp, width, height, free, walkable_share, blocked, blocker, scan_ms)
+        # Use semantic evidence, never flat colour or absent floor alone. Requiring
+        # both upper and lower coverage excludes a normal wall above open floor.
+        wall_ids = [i for i, name in self.model.names.items() if name == "wall"]
+        wall = np.isin(classes, wall_ids)
+        wall_columns = np.zeros(width, bool)
+        middle = height // 2
+        if middle > 0:
+            wall_columns[a:b] = ((wall[:middle, a:b].mean(axis=0) >= cfg.wall_column_share)
+                                 & (wall[middle:, a:b].mean(axis=0) >= cfg.wall_column_share))
+        return ScanResult(timestamp, width, height, free, walkable_share, blocked, blocker, scan_ms, wall_columns)
 
     def _blocker(self, classes: np.ndarray, free: np.ndarray, blocked: np.ndarray) -> str:
         if not blocked.any():
@@ -288,19 +312,48 @@ class ObstacleScanner:
         scan = self.latest()
         if scan is None:
             return Assessment("waiting for a scan" if self._latest is None else "scan too old")
-        unexplained = scan.blocked & ~self._explained(scan, frame, policy=policy)
+        explained = self._explained(scan, frame, policy=policy)
+        unexplained = scan.blocked & ~explained
         a, b = int(cfg.left_edge * scan.width), int(cfg.right_edge * scan.width)
         corridor_cols = max(b - a, 1)
         qualifies = (scan.walkable_share >= cfg.min_walkable_share
                      and unexplained.sum() / corridor_cols >= cfg.min_blocked_share)
+        wall_unexplained = (scan.wall_columns & ~explained if scan.wall_columns is not None
+                            else np.zeros(scan.width, bool))
+        wall_qualifies = wall_unexplained.sum() / corridor_cols >= cfg.wall_corridor_share
+        unclear = scan.featureless and scan.walkable_share < cfg.min_walkable_share and not wall_qualifies
         with self._lock:
             # A newer scan does not invalidate this fresh snapshot, but a reset does.
             if self._generation != generation:
                 return Assessment("waiting for a scan")
             if self._assessed is not scan:
+                if self._assessed is not None and scan.timestamp - self._assessed.timestamp > cfg.max_age_s:
+                    self._recent.clear()
+                    self._wall_recent.clear()
+                    self._unclear_recent.clear()
                 self._recent.append(bool(qualifies))
+                self._wall_recent.append(bool(wall_qualifies))
+                self._unclear_recent.append(bool(unclear))
                 self._assessed = scan
             confirmed = sum(self._recent) >= cfg.confirm_scans
+            wall_confirmed = sum(self._wall_recent) >= cfg.confirm_scans
+            unclear_confirmed = sum(self._unclear_recent) >= cfg.confirm_scans
+        if unclear:
+            if not unclear_confirmed:
+                return Assessment("featureless view (confirming)")
+            box = (a * frame.frame_width / scan.width, 0.0,
+                   b * frame.frame_width / scan.width, float(frame.frame_height))
+            return Assessment("view unclear (featureless image; distance unknown)",
+                              Detection(VIEW_UNCLEAR, -1, 0.9, box, None))
+        if wall_qualifies:
+            if not wall_confirmed:
+                return Assessment("wall fills central view (confirming)", unexplained=wall_unexplained)
+            # Full-height central extent triggers the existing repeated caution
+            # policy. It represents wall coverage in the view, not measured range.
+            box = (a * frame.frame_width / scan.width, 0.0,
+                   b * frame.frame_width / scan.width, float(frame.frame_height))
+            obstacle = Detection(WALL_OBSTACLE, -1, 0.9, box, None)
+            return Assessment("wall fills central view (distance unknown)", obstacle, wall_unexplained)
         if scan.walkable_share < cfg.min_walkable_share:
             return Assessment(CANT_JUDGE)
         if not qualifies or not confirmed:

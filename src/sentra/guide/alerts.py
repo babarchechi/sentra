@@ -37,7 +37,7 @@ from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from sentra.guide.obstacles import UNKNOWN_OBSTACLE
+from sentra.guide.obstacles import UNKNOWN_OBSTACLE, WALL_OBSTACLE, VIEW_UNCLEAR
 from sentra.guide.person_check import UNCONFIRMED_PERSON
 from sentra.guide.schema import (
     SEVERITY_RANK,
@@ -52,7 +52,7 @@ from sentra.guide.schema import (
 # "Possible obstacle ahead.". UNCONFIRMED_PERSON: a "person" box the pose model found no body in (a hand, an arm,
 # or a real person seen too close), see sentra.guide.person_check.
 # UNKNOWN_OBSTACLE: the floor stops close ahead and no recognised object explains it (sentra.guide.obstacles).
-OBSTACLE_ONLY_LABELS: frozenset[str] = frozenset({UNCONFIRMED_PERSON, UNKNOWN_OBSTACLE})
+OBSTACLE_ONLY_LABELS: frozenset[str] = frozenset({UNCONFIRMED_PERSON, UNKNOWN_OBSTACLE, WALL_OBSTACLE, VIEW_UNCLEAR})
 
 # COCO classes worth mentioning for someone moving through a room or along a path. Small tabletop things
 # (cups, phones, keyboards, ...) are left out on purpose: they would make the guide chatty.
@@ -125,6 +125,8 @@ def alert_text(name: str, count: int, region: Region, meters: float | None = Non
     """E.g. "Chair ahead.", "2 people to your right.", "Chair ahead, approximately 1.4 meters.",
     with `edge` (off-centre but overlapping the path): "Chair ahead, slightly left.",
     and with `caution`: "Caution, chair ahead.", "Caution, possible obstacle ahead."."""
+    if name == VIEW_UNCLEAR:
+        return "Caution, view unclear." if caution else "View unclear."
     if name == OBSTACLE:
         subject = "possible obstacle"
     else:
@@ -202,6 +204,9 @@ class AlertPolicy:
         for obj in confident:
             groups.setdefault((spoken_name(obj.detection.label), obj.region), []).append(obj)
         for obj in objects:
+            if obj.detection.label == VIEW_UNCLEAR:
+                groups.setdefault((VIEW_UNCLEAR, Region.CENTER), []).append(obj)
+                continue
             if (
                 id(obj) not in confident_ids
                 and obj.region is Region.CENTER
@@ -327,14 +332,18 @@ class AlertPolicy:
         count = 1 if name == OBSTACLE else len(members)
         severity = max((o.severity for o in members), key=SEVERITY_RANK.__getitem__)
         confidence = max(o.detection.confidence for o in members)
-        speakable = [o.depth for o in members if o.depth.speakable]
+        speakable = [o.depth for o in members if o.depth.speakable and name != VIEW_UNCLEAR]
         nearest = min(speakable, key=lambda d: d.meters) if speakable else None
         meters = round(nearest.meters, 1) if nearest is not None else None
         track_id = members[0].detection.track_id if len(members) == 1 else None
         what = name
+        if name == VIEW_UNCLEAR:
+            what = "featureless camera view, no usable floor evidence (visibility warning; distance unknown)"
         if name == OBSTACLE:
             labels = {o.detection.label for o in members}
-            if UNKNOWN_OBSTACLE in labels:
+            if WALL_OBSTACLE in labels:
+                what = "wall fills central view (semantic scan; distance unknown)"
+            elif UNKNOWN_OBSTACLE in labels:
                 what = "floor blocked close ahead, no recognised object (floor scan)"
             elif UNCONFIRMED_PERSON in labels:
                 what = "person with no body seen (hand, arm or too close)"

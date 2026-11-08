@@ -44,6 +44,19 @@ python src/guide.py --source "http://<DroidCam WiFi IP>:4747/video" --rotate 90 
 `yolo26n.pt` (5.3 MB) downloads on the first run. Click the window, then **m** mute, **p** privacy, **q** quit.
 Directions are from the camera's point of view.
 
+## Wall and featureless-view cautions
+
+Run with `python src/guide.py --source 0 --obstacles indoor` (replace `0` with your phone stream URL if needed).
+With obstacle scanning enabled, a wall covering the central view produces repeated
+**"Caution, possible obstacle ahead."**, even when no floor is visible. If the image stays nearly uniform and
+the scanner cannot find usable floor evidence, it repeats **"Caution, view unclear."** instead. This includes
+plain surfaces the model fails to recognise, dark/covered lenses and featureless ceilings; it does not identify
+all of them as walls. Both use the existing caution interval (default two seconds, `--caution-every`).
+
+Scans must confirm the condition before speaking; fresh contrary evidence stops the warning and stale scans
+cannot keep it alive. Wall coverage is not measured distance. These rules have automated tests, but still need
+verification on your actual wall and phone camera. Without `--obstacles`, this extra scanner is disabled.
+
 ## How each teammate starts
 
 Full plan with tasks, acceptance tests and file ownership: **[docs/TEAM_PLAN.md](docs/TEAM_PLAN.md)**.

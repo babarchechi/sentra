@@ -83,7 +83,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Experimental: also look for obstacles YOLO can't name (boxes, poles, bins) from where the "
                              "floor stops, with a segmentation model (indoor: ADE20K, outdoor: Cityscapes). They are "
                              "only ever called 'Possible obstacle ahead.'; the window shows the open-looking floor, "
-                             "marked unverified. Off by default")
+                             "marked unverified. Also cautions repeatedly when a wall fills the central view, even "
+                             "without visible floor; a featureless view without floor evidence gets 'Caution, view "
+                             "unclear.' Off by default")
     parser.add_argument("--all-labels", action="store_true",
                         help="Announce every class the model knows, not just the obstacle list")
     parser.add_argument("--repeat-after", type=float, default=10.0,
