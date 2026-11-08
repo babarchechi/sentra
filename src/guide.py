@@ -84,8 +84,8 @@ def build_parser() -> argparse.ArgumentParser:
                              "floor stops, with a segmentation model (indoor: ADE20K, outdoor: Cityscapes). They are "
                              "only ever called 'Possible obstacle ahead.'; the window shows the open-looking floor, "
                              "marked unverified. Also cautions repeatedly when a wall fills the central view, even "
-                             "without visible floor; a featureless view without floor evidence gets 'Caution, view "
-                             "unclear.' Off by default")
+                             "without visible floor; a featureless view without floor evidence gets 'Caution, camera "
+                             "can't see.' Off by default")
     parser.add_argument("--all-labels", action="store_true",
                         help="Announce every class the model knows, not just the obstacle list")
     parser.add_argument("--repeat-after", type=float, default=10.0,

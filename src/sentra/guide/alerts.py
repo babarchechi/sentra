@@ -126,7 +126,7 @@ def alert_text(name: str, count: int, region: Region, meters: float | None = Non
     with `edge` (off-centre but overlapping the path): "Chair ahead, slightly left.",
     and with `caution`: "Caution, chair ahead.", "Caution, possible obstacle ahead."."""
     if name == VIEW_UNCLEAR:
-        return "Caution, view unclear." if caution else "View unclear."
+        return "Caution, camera can't see." if caution else "Camera can't see."
     if name == OBSTACLE:
         subject = "possible obstacle"
     else:

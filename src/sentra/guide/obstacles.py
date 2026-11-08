@@ -8,7 +8,7 @@ That height is the column's "free space". See docs/OBSTACLE_DETECTION.md for the
 
 Decisions, per scan:
 - Wall-labelled pixels fill the central view: confirm across scans and keep cautioning even without visible floor.
-- Nearly featureless image without floor evidence: repeated "Caution, view unclear." (not a wall claim).
+- Nearly featureless image without floor evidence: repeated "Caution, camera can't see." (not a wall claim).
 - Otherwise little floor visible in the lower half of the corridor: "can't judge", on screen only.
 - Enough corridor columns where the floor stops close (free space < `near_free` of the image height) and no confident
   YOLO box explains it: a possible obstruction. After 2 of the last 3 scans agree, it is added to the frame as an
@@ -69,7 +69,7 @@ class ObstacleConfig:
     min_walkable_share: float = 0.15  # floor needed in the lower half of the corridor, else "can't judge"
     wall_column_share: float = 0.85  # wall must fill this fraction of BOTH halves of a column
     wall_corridor_share: float = 0.80  # require broad wall coverage, not a small patch or side wall
-    featureless_std: float = 5.0     # max per-channel spatial std on 0..255 image; visibility warning only
+    featureless_residual_rms: float = 5.0  # max per-channel local texture on 0..255 image; visibility only
     explain_conf: float = 0.5        # a YOLO box at least this sure explains the columns it covers
     confirm_scans: int = 2           # an obstruction must be found in this many of the last `confirm_window` scans
     confirm_window: int = 3
@@ -257,7 +257,14 @@ class ObstacleScanner:
         result = self.load().predict(small, imgsz=cfg.imgsz, verbose=False)[0]
         classes = result.semantic_mask.data
         classes = classes.cpu().numpy() if hasattr(classes, "cpu") else np.asarray(classes)
-        featureless = bool(np.std(small.astype(np.float32), axis=(0, 1)).max() <= cfg.featureless_std)
+        # Remove gradual illumination changes before measuring local texture.
+        # A smooth wall with a brightness gradient is still visually featureless;
+        # edges and noise retain residual energy. Use every colour channel so
+        # coloured texture cannot disappear through conversion to grayscale.
+        pixels = small.astype(np.float32)
+        residual = pixels - cv2.GaussianBlur(pixels, (0, 0), sigmaX=3.0)
+        texture = np.sqrt(np.mean(residual * residual, axis=(0, 1))).max()
+        featureless = bool(texture <= cfg.featureless_residual_rms)
         return replace(self.analyse(classes, timestamp, (time.perf_counter() - start) * 1000.0),
                        featureless=featureless)
 
