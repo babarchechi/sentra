@@ -130,4 +130,4 @@ docs/
 
 Frames are processed in memory on the laptop and never saved or uploaded; logs contain labels and timing only. Test
 only with people who have agreed to be on camera. More in [docs/SAFETY_AND_PRIVACY.md](docs/SAFETY_AND_PRIVACY.md).
-Ultralytics YOLO is AGPL-3.0. Review licensing before any use beyond this hackathon.
+Sentra is licensed under the [GNU AGPL-3.0](LICENSE), the same licence as Ultralytics YOLO, which it builds on.

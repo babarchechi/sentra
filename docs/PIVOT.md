@@ -11,7 +11,7 @@ The plan for who builds what next is in [TEAM_PLAN.md](TEAM_PLAN.md).
 
 | Item | Value |
 | --- | --- |
-| Remote | `origin` = https://github.com/babarchechi/sentra (private) |
+| Remote | `origin` = https://github.com/babarchechi/sentra (private at the time; public since 2026-11-10) |
 | Baseline commit | `main` @ `7de069b` "Merge pull request #7 from babarchechi/feature/ui" |
 | Merged PRs | #1 skeleton, #2 review workflow, #3 pipeline, #4 Windows camera, #5 eval report, #6 posture (fall state machine), #7 dashboard |
 | Open PRs | none |
